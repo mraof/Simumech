@@ -26,7 +26,7 @@ public class IRCConnection implements Runnable
 	public MessageParser parser;
 	public List<String> channels = new ArrayList<String>();
 
-	public String nick = "Burgundy";
+	public String nick = "Simumech";
 	public String prefix = "$b";
 
 	public IRCConnection(String hostname) 
@@ -65,7 +65,7 @@ public class IRCConnection implements Runnable
 		(new Thread(queue)).start();
 		(new Thread(parser)).start();
 
-		output.println("USER " + nick + " 0 * :MraofBorg");
+		output.println("USER " + nick + " 0 * :" + nick);
 		output.println("NICK " + nick);
 		try {
 			while(running)

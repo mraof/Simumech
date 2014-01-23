@@ -11,7 +11,7 @@ import com.mraof.simumech.network.IRCConnection;
 
 public class Main 
 {
-	public static String clientName = "MraofBorg";
+	public static String clientName = "Simumech";
 	public static String version = "0";
 	
 	public static void main(String args[])

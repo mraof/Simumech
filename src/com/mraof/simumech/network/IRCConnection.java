@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -27,7 +29,9 @@ public class IRCConnection implements Runnable
 	public List<String> channels = new ArrayList<String>();
 
 	public String nick = "Simumech";
-	public String prefix = "$b";
+	public String prefix = "$";
+	public String socksProxy = "";
+	public int socksPort = 0;
 
 	public IRCConnection(String hostname) 
 	{
@@ -48,7 +52,13 @@ public class IRCConnection implements Runnable
 		in = null;
 		try {
 			System.out.println("Connecting to " + hostname + " port " + port);
-			socket = new Socket(hostname, port);
+			if(socksProxy.isEmpty())
+				socket = new Socket(hostname, port);
+			else
+			{
+				socket = new Socket(new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(socksProxy, socksPort)));
+				socket.connect(new InetSocketAddress(hostname, port));
+			}
 			output = new PrintWriter(socket.getOutputStream(), true);
 			in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 		} catch (UnknownHostException e) {

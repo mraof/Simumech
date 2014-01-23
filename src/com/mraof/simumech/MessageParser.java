@@ -50,6 +50,11 @@ public class MessageParser implements Runnable
 			for(String channel : connection.channels)
 				queue.add("JOIN " + channel);
 		}
+		if(type.equals("433"))
+		{
+			connection.nick = connection.nick + "_";
+			connection.output.println("NICK " + connection.nick);
+		}
 
 		splitIndex = message.indexOf(':');
 		String parameters = "";
@@ -71,18 +76,6 @@ public class MessageParser implements Runnable
 
 	public void onMessage(String source, String destination, String message)
 	{
-		if(destination.equalsIgnoreCase(connection.nick))
-		{
-			destination = source.substring(0, source.indexOf('!'));
-			if(destination.equalsIgnoreCase(connection.nick))
-				return;
-		}
-
-		if(message.charAt(0) == '\u0001')
-		{
-			if(!onCTCP(source, destination, message.substring(1)))
-				return;
-		}
 
 		if(message.startsWith(connection.prefix))
 		{
@@ -102,8 +95,21 @@ public class MessageParser implements Runnable
 			}
 
 
-			onCommand(source, command, message);
+			onCommand(source, destination, command, message);
 			return;
+		}
+		
+		if(destination.equalsIgnoreCase(connection.nick))
+		{
+			destination = source.substring(0, source.indexOf('!'));
+			if(destination.equalsIgnoreCase(connection.nick))
+				return;
+		}
+		
+		if(message.charAt(0) == '\u0001')
+		{
+			if(!onCTCP(source, destination, message.substring(1)))
+				return;
 		}
 
 		System.out.println("PRIVMSG " + destination + " :" + message);
@@ -170,13 +176,17 @@ public class MessageParser implements Runnable
 
 		return false;
 	}
-	public void onCommand(String source, String command, String message)
+	public void onCommand(String source, String destination, String command, String message)
 	{
-		System.out.println("Recieved command " + command + " from " + source + (message.isEmpty() ? " with arguments " + message : ""));
+		System.out.println("Recieved command " + command + " from " + source + " to " + destination + (message.isEmpty() ? " with arguments " + message : ""));
 		if(command.equalsIgnoreCase("QUIT"))
 			connection.running = false;
-		if(command.equalsIgnoreCase("RAW"))
+		else if(command.equalsIgnoreCase("RAW") && !message.isEmpty())
 			connection.output.println(message);
+		else if(command.equalsIgnoreCase("JOIN") && !message.isEmpty())
+			connection.output.println("JOIN " + message);
+		else if(command.equalsIgnoreCase("PART"))
+			connection.output.println("PART " + (message.isEmpty() && !destination.equalsIgnoreCase(connection.nick) ? destination : message));
 	}
 
 

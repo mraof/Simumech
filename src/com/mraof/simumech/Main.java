@@ -16,7 +16,7 @@ public class Main
 	
 	public static void main(String args[])
 	{
-		if (args.length != 2) {
+		if (args.length < 1) {
             System.err.println(
                 "Usage: java EchoClient <host name> <port number>");
             System.exit(1);
@@ -30,10 +30,12 @@ public class Main
         IRCConnection connection = new IRCConnection(hostName, portNumber);
         connection.channels.add("#test");
         (new Thread(connection)).start();
-        IRCConnection connection2 = new IRCConnection("irc.esper.net");
-        connection2.channels.add("#Kenbot");
-        connection2.channels.add("#bots");
-        (new Thread(connection2)).start();
-        
+//        IRCConnection connection2 = new IRCConnection("irc.esper.net");
+//        connection2.channels.add("#Kenbot");
+//        connection2.channels.add("#bots");
+//        connection2.socksProxy = "localhost";
+//        connection2.socksPort = 8642;
+//        (new Thread(connection2)).start();
+//This code works, I'm just commenting it out to prevent channels from being flooded
 	}
 }

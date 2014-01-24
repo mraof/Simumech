@@ -1,6 +1,5 @@
 package com.mraof.simumech;
 
-import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -24,6 +23,9 @@ public class MessageParser implements Runnable
 	}
 	public void onRecieved(String message)
 	{
+		boolean isHandled = false;
+		if(message.isEmpty())
+			return;
 		int splitIndex = message.indexOf(' ');
 		String fullMessage = message;
 
@@ -43,17 +45,13 @@ public class MessageParser implements Runnable
 			return;
 		}
 
-		System.out.println(fullMessage);
+		//		System.out.println(fullMessage);
 
 		if(type.equals("001"))
 		{
 			for(String channel : connection.channels)
-				queue.add("JOIN " + channel);
-		}
-		if(type.equals("433"))
-		{
-			connection.nick = connection.nick + "_";
-			connection.output.println("NICK " + connection.nick);
+				join(channel);
+			return;
 		}
 
 		splitIndex = message.indexOf(':');
@@ -66,16 +64,35 @@ public class MessageParser implements Runnable
 		}
 
 		if(type.equalsIgnoreCase("PRIVMSG"))
+		{
 			onMessage(source, parameters, message);
+			isHandled = true;
+		}
 		if(type.equalsIgnoreCase("INVITE"))
+		{
 			join(message);
+			System.out.println(connection.hostname + ": Invited to " + message);
+		}
 
-
-		System.out.printf("Type: %s, source: %s, parameters: %s, message: %s\n", type, source, parameters, message);
+		if(!isHandled)
+			System.out.printf("Type: %s, source: %s, parameters: %s, message: %s\n", type, source, parameters, message);
 	}
 
 	public void onMessage(String source, String destination, String message)
 	{
+		String sourceNick = source.substring(0, source.indexOf('!'));
+		if(destination.equalsIgnoreCase(connection.nick))
+		{
+			destination = sourceNick;
+			if(destination.equalsIgnoreCase(connection.nick))
+				return;
+		}
+
+		if(message.charAt(0) == '\u0001')
+		{
+			if(!onCTCP(source, destination, message.substring(1)))
+				return;
+		}
 
 		if(message.startsWith(connection.prefix))
 		{
@@ -98,25 +115,13 @@ public class MessageParser implements Runnable
 			onCommand(source, destination, command, message);
 			return;
 		}
-		
-		if(destination.equalsIgnoreCase(connection.nick))
-		{
-			destination = source.substring(0, source.indexOf('!'));
-			if(destination.equalsIgnoreCase(connection.nick))
-				return;
-		}
-		
-		if(message.charAt(0) == '\u0001')
-		{
-			if(!onCTCP(source, destination, message.substring(1)))
-				return;
-		}
 
-		System.out.println("PRIVMSG " + destination + " :" + message);
-		privmsg(destination, message);
+		//		System.out.println("PRIVMSG " + destination + " :" + message);
+		//		privmsg(destination, message);
 	}
 	public boolean onCTCP(String source, String destination, String message)
 	{
+
 
 		int end;
 		if((end = message.indexOf('\u0001')) != -1)
@@ -134,19 +139,21 @@ public class MessageParser implements Runnable
 			message = "";
 		}
 
+		String replyDestination = source.substring(0, source.indexOf('!'));
+
 		System.out.printf("CTCP %s to %s from %s with message %s\n", type, destination, source, message);
 		if(type.equalsIgnoreCase("PING"))
-			ctcpReply(destination, "PING", message);
+			ctcpReply(replyDestination, "PING", message);
 		if(type.equalsIgnoreCase("VERSION"))
-			ctcpReply(destination, "VERSION", Main.clientName + ":" + Main.version + ":" + System.getProperty("os.name"));
+			ctcpReply(replyDestination, "VERSION", Main.clientName + ":" + Main.version + ":" + System.getProperty("os.name"));
 		else if(type.equalsIgnoreCase("ACTION"))
 			return true;
 		else if(type.equalsIgnoreCase("TIME"))
-			ctcpReply(destination, "TIME", (new SimpleDateFormat()).format(Calendar.getInstance().getTime()));
+			ctcpReply(replyDestination, "TIME", (new SimpleDateFormat()).format(Calendar.getInstance().getTime()));
 		else if(type.equalsIgnoreCase("CLIENTINFO"))
 		{
 			if(message.isEmpty())
-				ctcpReply(destination, "CLIENTINFO", "PING VERSION ACTION TIME CLIENTINFO");
+				ctcpReply(replyDestination, "CLIENTINFO", "PING VERSION ACTION TIME CLIENTINFO");
 			else
 			{
 				String response = "";
@@ -170,7 +177,7 @@ public class MessageParser implements Runnable
 				default:
 					response = "Unknown command";	
 				}
-				ctcpReply(destination, "CLIENTINFO", response);
+				ctcpReply(replyDestination, "CLIENTINFO", response);
 			}
 		}
 
@@ -178,7 +185,19 @@ public class MessageParser implements Runnable
 	}
 	public void onCommand(String source, String destination, String command, String message)
 	{
-		System.out.println("Recieved command " + command + " from " + source + " to " + destination + (message.isEmpty() ? " with arguments " + message : ""));
+		System.out.println("Recieved command " + command + " from " + source + (message.isEmpty() ? " with arguments " + message : ""));
+
+		boolean allowed = false;
+		for(String owner : Main.owners)
+			if(source.substring(0, source.indexOf('!')).equals(owner))
+			{
+				allowed = true;
+				break;
+			}
+
+		if(!allowed)
+			return;
+
 		if(command.equalsIgnoreCase("QUIT"))
 			connection.running = false;
 		else if(command.equalsIgnoreCase("RAW") && !message.isEmpty())
@@ -186,7 +205,12 @@ public class MessageParser implements Runnable
 		else if(command.equalsIgnoreCase("JOIN") && !message.isEmpty())
 			connection.output.println("JOIN " + message);
 		else if(command.equalsIgnoreCase("PART"))
-			connection.output.println("PART " + (message.isEmpty() && !destination.equalsIgnoreCase(connection.nick) ? destination : message));
+			connection.output.println("PART " + message);
+		else if(command.equalsIgnoreCase("EMPTY"))
+		{
+			queue.messages.clear();
+			privmsg(destination, "Queue emptied");
+		}
 	}
 
 

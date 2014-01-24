@@ -23,7 +23,7 @@ public class MessageQueue implements Runnable
 				if(!message.equals("~Goodnight~"))
 				{
 					connection.output.println(message);
-					Thread.sleep((long) (Math.random() * 1000) + 500);
+					Thread.sleep((long) (Math.random() * 1000) + 250);
 				}
 			} catch(Exception e){e.printStackTrace();}
 		}

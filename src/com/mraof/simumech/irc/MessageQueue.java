@@ -1,4 +1,4 @@
-package com.mraof.simumech.network;
+package com.mraof.simumech.irc;
 
 import java.util.concurrent.LinkedBlockingQueue;
 

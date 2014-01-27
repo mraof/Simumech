@@ -1,4 +1,4 @@
-package com.mraof.simumech.network;
+package com.mraof.simumech.irc;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -11,8 +11,6 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
-
-import com.mraof.simumech.MessageParser;
 
 
 public class IRCConnection implements Runnable

@@ -1,11 +1,10 @@
-package com.mraof.simumech;
+package com.mraof.simumech.irc;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.concurrent.LinkedBlockingQueue;
 
-import com.mraof.simumech.network.IRCConnection;
-import com.mraof.simumech.network.MessageQueue;
+import com.mraof.simumech.Main;
 
 public class MessageParser implements Runnable
 {
@@ -53,6 +52,12 @@ public class MessageParser implements Runnable
 				join(channel);
 			return;
 		}
+		if(type.equalsIgnoreCase("433"))
+		{
+			System.out.println("Nick already in use, using " + connection.nick + "_");
+			connection.nick = connection.nick + "_";
+			return;
+		}
 
 		splitIndex = message.indexOf(':');
 		String parameters = "";
@@ -66,12 +71,18 @@ public class MessageParser implements Runnable
 		if(type.equalsIgnoreCase("PRIVMSG"))
 		{
 			onMessage(source, parameters, message);
-			isHandled = true;
+			return;
 		}
 		if(type.equalsIgnoreCase("INVITE"))
 		{
 			join(message);
 			System.out.println(connection.hostname + ": Invited to " + message);
+			isHandled = true;
+		}
+		if(type.equalsIgnoreCase("NICK"))
+		{
+			System.out.println(source + " is now known as " + message);
+			isHandled = true;
 		}
 
 		if(!isHandled)
@@ -185,18 +196,21 @@ public class MessageParser implements Runnable
 	}
 	public void onCommand(String source, String destination, String command, String message)
 	{
-		System.out.println("Recieved command " + command + " from " + source + (message.isEmpty() ? " with arguments " + message : ""));
-
-		boolean allowed = false;
-		for(String owner : Main.owners)
-			if(source.substring(0, source.indexOf('!')).equals(owner))
-			{
-				allowed = true;
-				break;
-			}
+		System.out.println("Recieved command \"" + command + "\" from \"" + source + "\"" + (message.isEmpty() ? " with arguments \"" + message + "\"" : ""));
+		boolean allowed = source.isEmpty();
+		if(source.indexOf('!') != -1)
+			for(String owner : Main.owners)
+				if(source.substring(0, source.indexOf('!')).equals(owner))
+				{
+					allowed = true;
+					break;
+				}
 
 		if(!allowed)
+		{
+			System.out.println("User " + source + " attempted to use " + command.toUpperCase());
 			return;
+		}
 
 		if(command.equalsIgnoreCase("QUIT"))
 			connection.running = false;
@@ -210,6 +224,11 @@ public class MessageParser implements Runnable
 		{
 			queue.messages.clear();
 			privmsg(destination, "Queue emptied");
+		}
+		else if(command.equalsIgnoreCase("MSG"))
+		{
+			
+			privmsg(destination, message);
 		}
 	}
 

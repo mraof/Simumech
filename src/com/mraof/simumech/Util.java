@@ -19,4 +19,12 @@ public class Util
 	{
 		return split(string, " ");
 	}
+
+	public static String selectivelyLowerCase(String string)
+	{
+		if(string.toLowerCase().startsWith("http:") || string.toLowerCase().startsWith("https:"))
+			return string;
+		else 
+			return string.toLowerCase();
+	}
 }

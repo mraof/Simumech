@@ -14,10 +14,14 @@ public class Main
 	public static String version = "0";
 
 	public static String[] owners = {"Mraof"};
+	public static MarkovChain markovChain;
+	public static boolean useCR = true;
 
 	public static void main(String args[])
 	{
-		MarkovChain markovChain = new MarkovChain();
+		if(args.length >= 1 && args[0].equals("noCR"));
+			useCR = false;
+		markovChain = new MarkovChain();
 		
 		IRC irc = new IRC();
 		boolean useSkype = false;

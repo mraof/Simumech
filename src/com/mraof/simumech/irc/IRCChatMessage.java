@@ -7,7 +7,7 @@ public class IRCChatMessage implements IChatMessage
 	String message;
 	String owner;
 	String split;
-	
+
 	@Override
 	public String getMessage() 
 	{

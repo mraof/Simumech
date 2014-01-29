@@ -25,6 +25,7 @@ public class SkypeContactAdder implements Runnable
 						Skype.getContactList().addFriend(friend, "Accepted");
 			} catch (SkypeException e) {e.printStackTrace();} catch (InterruptedException e) {e.printStackTrace();}
 		}
+		System.out.println("Contact thread finished");
 	}
 
 }

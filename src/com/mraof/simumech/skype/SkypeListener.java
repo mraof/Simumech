@@ -30,7 +30,7 @@ public class SkypeListener implements ChatMessageListener, Runnable
 		while(parent.running)
 		{
 			try {
-				ChatMessage message = messages.poll(30, TimeUnit.SECONDS);
+				ChatMessage message = messages.poll(10, TimeUnit.SECONDS);
 				if(message == null || !message.getStatus().equals(ChatMessage.Status.RECEIVED))
 				{
 					//System.out.println("[Skype] Ignoring message because " + (message == null ? "it is null" : "the status is " + message.getStatus()));
@@ -40,10 +40,10 @@ public class SkypeListener implements ChatMessageListener, Runnable
 				double chance = rand.nextDouble();
 				if(!ignored.contains(message.getSenderId()) && (message.getChat().getAllMembers().length <= 2 || (message.getContent().contains(Skype.getProfile().getFullName()))))
 				{
-					Main.markovChain.addLine(message.getContent());
 					message.getChat().send(Main.markovChain.reply(message.getContent()));
+					Main.markovChain.addLine(message.getContent());
 				}
-			} catch(InterruptedException e){Thread.currentThread().interrupt();}
+			} catch(InterruptedException e){Thread.currentThread().interrupt();break;}
 			catch (SkypeException e) {e.printStackTrace();}
 		}
 	}

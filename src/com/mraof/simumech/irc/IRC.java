@@ -3,7 +3,10 @@ package com.mraof.simumech.irc;
 import java.util.ArrayList;
 import java.util.List;
 
-public class IRC {
+import com.mraof.simumech.IChat;
+
+public class IRC implements IChat
+{
 
 	public static List<IRCConnection> connections = new ArrayList<IRCConnection>();
 	
@@ -13,12 +16,13 @@ public class IRC {
 		connections.get(connections.size() - 1).channels.add("#test");
 		(new Thread(connections.get(connections.size() - 1))).start();
 
-//		connections.add(new IRCConnection("irc.esper.net"));
-//		connections.get(connections.size() - 1).channels.add("#Kenbot");
-//		connections.get(connections.size() - 1).channels.add("#bots");
-//		connections.get(connections.size() - 1).socksProxy = "localhost";
-//		connections.get(connections.size() - 1).socksPort = 8642;
-//		(new Thread(connections.get(connections.size() - 1))).start();
+		connections.add(new IRCConnection("irc.esper.net"));
+		connections.get(connections.size() - 1).nick = "sbnkalnyBeta";
+		connections.get(connections.size() - 1).channels.add("#Kenbot");
+		connections.get(connections.size() - 1).channels.add("#bots");
+		connections.get(connections.size() - 1).socksProxy = "localhost";
+		connections.get(connections.size() - 1).socksPort = 8642;
+		(new Thread(connections.get(connections.size() - 1))).start();
 
 		//        connections.add(new IRCConnection("irc.caffie.net"));
 		//        connections.get(connections.size() - 1).channels.add("#zc");
@@ -70,5 +74,11 @@ public class IRC {
 			connection.running = false;
 			connection.parser.add("");
 		}
+	}
+
+	@Override
+	public void message(String message) 
+	{
+		
 	}
 }

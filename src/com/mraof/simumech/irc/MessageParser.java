@@ -129,7 +129,7 @@ public class MessageParser implements Runnable
 
 		//		System.out.println("PRIVMSG " + destination + " :" + message);
 		if(message.contains(connection.nick))
-				privmsg(destination, Main.markovChain.reply(message));
+				privmsg(destination, Main.markovChain.reply(message, connection.nick, sourceNick));
 	}
 	public boolean onCTCP(String source, String destination, String message)
 	{

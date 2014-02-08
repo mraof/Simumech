@@ -48,6 +48,7 @@ public class MarkovChain
 	{
 		lock.writeLock().lock();
 		{
+			ArrayList<String> splitLines = Util.split(". ");
 			if(!lines.contains(line))
 				lines.add(line);
 			ArrayList<String> currentWords = Util.split(line);
@@ -83,7 +84,11 @@ public class MarkovChain
 		lock.writeLock().unlock();
 	}
 
-	public String reply(String inputString)
+	public String reply(String message)
+	{
+		return reply(message, "", "");
+	}
+	public String reply(String inputString, String name, String sender)
 	{
 		ArrayList<String> currentLines;
 		ArrayList<String> currentWords = new ArrayList<String>();
@@ -96,8 +101,7 @@ public class MarkovChain
 			return "";
 		}
 
-		String message = inputString;
-		currentLines = Util.split(message, ". ");
+		currentLines = Util.split(inputString, ". ");
 
 		for(int i = 0; i < currentLines.size(); i++)
 			currentWords.addAll(Util.split(currentLines.get(i)));
@@ -187,6 +191,8 @@ public class MarkovChain
 		replyString = sentence.pollFirst();
 		if(!replyString.isEmpty())
 			replyString = replyString.substring(0, 1).toUpperCase() + replyString.substring(1);
+		if(replyString.equalsIgnoreCase(name))
+			replyString = sender;
 		for(String replyWord : sentence)
 			if(!replyWord.isEmpty())
 				replyString += " " + replyWord;

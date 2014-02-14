@@ -94,6 +94,7 @@ public class MarkovChain
 		ArrayList<String> currentWords = new ArrayList<String>();
 		ArrayDeque<String> sentence = new ArrayDeque<String>();
 		String replyString = "";
+		int inputLength = inputString.length();
 
 		if(inputString.isEmpty())
 		{
@@ -123,19 +124,19 @@ public class MarkovChain
 			if(list != null && rand.nextDouble() > .1)
 			{
 				//				String word = words.get(list.get(rand.nextInt(list.size()))).toString();
-				System.out.println("Adding " + pairKey + " to sentence from pair " + pairKey);
+//				System.out.println("Adding " + pairKey + " to sentence from pair " + pairKey);
 				if(sentence.size() == 0)
 					sentence.add(pairKey);
 				else sentence.add(currentWord);
 			}
-			else if(rand.nextDouble() > (1 / (currentWords.size() - i + 1) + .2))
+			else if(rand.nextDouble() > (1 / (currentWords.size() - i + 1) + .1))
 			{
 				String key = currentWord;
 				list = wordsNext.get(key);
 				if(list != null)
 				{
 					//					String word = words.get(list.get(rand.nextInt(list.size()))).toString();
-					System.out.println("Adding " + key + " to sentence from word " + key);
+//					System.out.println("Adding " + key + " to sentence from word " + key);
 					sentence.add(key);
 				}
 			}
@@ -158,13 +159,13 @@ public class MarkovChain
 			}
 			String key = previousWord + " " + currentWord;
 			ArrayList<Integer> list = wordPairsNext.get(key);
-			if(list != null && rand.nextDouble() < 4 / (double)sentence.size())
+			if(list != null && rand.nextDouble() < inputLength / (double)sentence.size())
 			{
 				String word = words.get(list.get(rand.nextInt(list.size()))).toString();
 				//								System.out.println("Adding " + word + " to sentence from pair " + key);
 				sentence.add(word);
 			}
-			else /*if(rand.nextDouble() > (1 / (sentence.size() + .5) + .2))*/
+			else if(rand.nextDouble() < (1 / (sentence.size() + .5)))
 			{
 				key = currentWord;
 				list = wordsNext.get(key);
@@ -191,7 +192,7 @@ public class MarkovChain
 		replyString = sentence.pollFirst();
 		if(!replyString.isEmpty())
 			replyString = replyString.substring(0, 1).toUpperCase() + replyString.substring(1);
-		if(replyString.equalsIgnoreCase(name))
+		if(replyString.equalsIgnoreCase(name) && sender != null)
 			replyString = sender;
 		for(String replyWord : sentence)
 			if(!replyWord.isEmpty())

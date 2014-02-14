@@ -19,6 +19,7 @@ public class Main
 	public static boolean running = true;
 	public static HashMap<String, IChat> chats = new HashMap<String, IChat>();
 	public static HashMap<String, ChatLoader> chatLoaders = new HashMap<String, ChatLoader>();
+	private static BufferedReader bufferedReader;
 
 	public static void main(String args[])
 	{
@@ -42,7 +43,7 @@ public class Main
 			chatLoaders.put("skype", chatLoader);
 		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
 
-		BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(System.in));
+		bufferedReader = new BufferedReader(new InputStreamReader(System.in));
 		String inputString;
 		if(Profiler.instrumentation != null)
 		{
@@ -51,62 +52,9 @@ public class Main
 		}
 
 		try {
-			while((inputString = bufferedReader.readLine()) != null)
+			while(running && (inputString = bufferedReader.readLine()) != null)
 			{
-				if(inputString.equalsIgnoreCase("QUIT"))
-				{
-					break;
-				}
-				int splitIndex = inputString.indexOf(' ');
-				if(splitIndex != -1)
-				{
-					String firstWord = inputString.substring(0, splitIndex).toLowerCase();
-					inputString = inputString.substring(splitIndex + 1);
-					if(firstWord.equals("reload"))
-					{
-						IChat chat = chats.get(inputString);	
-						if(chat != null)
-						{
-							chat.quit();
-							chatLoaders.remove(inputString);
-							ChatLoader chatLoader = new ChatLoader();				
-							System.out.println("Reloading " + inputString + " (" +chat.getClass().getName() + ")");
-							try
-							{
-								chats.put(firstWord, (IChat) (Class.forName(chat.getClass().getName(), false, chatLoader)).newInstance());
-							} catch (InstantiationException e) {
-								e.printStackTrace();
-							} catch (IllegalAccessException e) {
-								e.printStackTrace();
-							} catch (ClassNotFoundException e) {
-								e.printStackTrace();
-							}
-							System.out.println("Done");
-						}
-					}
-					else if(firstWord.equals("load"))
-					{
-						splitIndex = inputString.indexOf(' ');
-						firstWord = inputString.substring(0, splitIndex).toLowerCase();
-						inputString = inputString.substring(splitIndex + 1);
-						try
-						{
-							ChatLoader chatLoader = new ChatLoader();
-							chats.put(firstWord, (IChat) (Class.forName(inputString, false, chatLoader)).newInstance());
-							chatLoaders.put(firstWord, chatLoader);
-							System.out.println("Loaded " + firstWord);
-						}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
-					}
-					else if(firstWord.equals("unload"))
-					{
-						IChat chat = chats.get(inputString);
-						if(chat != null)
-						{
-							chat.quit();
-							chatLoaders.remove(inputString);
-						}
-					}
-				}
+				globalCommand(inputString);
 				//System.out.println(markovChain.reply(inputString));
 			}
 		} catch (IOException e) {
@@ -124,5 +72,71 @@ public class Main
 		} catch (InterruptedException e) {e.printStackTrace();}
 
 
+	}
+
+	public static void globalCommand(String inputString) 
+	{
+		if(inputString.equalsIgnoreCase("QUIT"))
+		{
+			running = false;
+			try {
+				bufferedReader.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			};
+		}
+		int splitIndex = inputString.indexOf(' ');
+		if(splitIndex != -1)
+		{
+			String firstWord = inputString.substring(0, splitIndex).toLowerCase();
+			inputString = inputString.substring(splitIndex + 1);
+			if(chats.containsKey(firstWord))
+				chats.get(firstWord).command(inputString);
+			
+			if(firstWord.equals("reload"))
+			{
+				IChat chat = chats.get(inputString);	
+				if(chat != null)
+				{
+					chat.quit();
+					chatLoaders.remove(inputString);
+					ChatLoader chatLoader = new ChatLoader();				
+					System.out.println("Reloading " + inputString + " (" +chat.getClass().getName() + ")");
+					try
+					{
+						chats.put(firstWord, (IChat) (Class.forName(chat.getClass().getName(), false, chatLoader)).newInstance());
+					} catch (InstantiationException e) {
+						e.printStackTrace();
+					} catch (IllegalAccessException e) {
+						e.printStackTrace();
+					} catch (ClassNotFoundException e) {
+						e.printStackTrace();
+					}
+					System.out.println("Done");
+				}
+			}
+			else if(firstWord.equals("load"))
+			{
+				splitIndex = inputString.indexOf(' ');
+				firstWord = inputString.substring(0, splitIndex).toLowerCase();
+				inputString = inputString.substring(splitIndex + 1);
+				try
+				{
+					ChatLoader chatLoader = new ChatLoader();
+					chats.put(firstWord, (IChat) (Class.forName(inputString, false, chatLoader)).newInstance());
+					chatLoaders.put(firstWord, chatLoader);
+					System.out.println("Loaded " + firstWord);
+				}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+			}
+			else if(firstWord.equals("unload"))
+			{
+				IChat chat = chats.get(inputString);
+				if(chat != null)
+				{
+					chat.quit();
+					chatLoaders.remove(inputString);
+				}
+			}
+		}
 	}
 }

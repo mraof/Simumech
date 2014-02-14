@@ -12,30 +12,53 @@ public class IRC implements IChat
 	
 	public IRC() 
 	{
-		connections.add(new IRCConnection("localhost"));
-		connections.get(connections.size() - 1).channels.add("#test");
-		(new Thread(connections.get(connections.size() - 1))).start();
-
-		connections.add(new IRCConnection("irc.esper.net"));
-		connections.get(connections.size() - 1).nick = "sbnkalnyBeta";
-		connections.get(connections.size() - 1).channels.add("#Kenbot");
-		connections.get(connections.size() - 1).channels.add("#bots");
-		connections.get(connections.size() - 1).socksProxy = "localhost";
-		connections.get(connections.size() - 1).socksPort = 8642;
-		(new Thread(connections.get(connections.size() - 1))).start();
-
-		//        connections.add(new IRCConnection("irc.caffie.net"));
-		//        connections.get(connections.size() - 1).channels.add("#zc");
-		//        connections.get(connections.size() - 1).nick = "MraofMind";
-		//        connections.get(connections.size() - 1).socksProxy = "localhost";
-		//        connections.get(connections.size() - 1).socksPort = 8642;
-		//        (new Thread(connections.get(connections.size() - 1))).start();
+		connect("localhost", new String[]{"#test"});
+		connect("irc.esper.net", "sbnkalnyBeta", new String[]{"#Kenbot", "#bots"});
 		
-//		connections.add(new IRCConnection("chat.freenode.net"));
-//		connections.get(connections.size() - 1).channels.add("#dreamvsdream");
-//		connections.get(connections.size() - 1).socksProxy = "localhost";
-//		connections.get(connections.size() - 1).socksPort = 8642;
-//		(new Thread(connections.get(connections.size() - 1))).start();
+	}
+	public void connect(String server)
+	{
+		connect(server, new String[]{});
+	}
+	public void connect(String server, String nick)
+	{
+		connect(server, nick, new String[]{});
+	}
+	private void connect(String server, String nick, String[] channels) 
+	{
+		connect(server, nick, channels, "", 0);
+	}
+	public void connect(String server, String[] channels)
+	{
+		connect(server, channels, "", 0);
+	}
+	public void connect(String server, String[] channels, String socksProxy, int socksPort)
+	{
+		connect(server, "", channels, socksProxy, socksPort);
+	}
+	public void connect(String server, String nick, String[] channels, String socksProxy, int socksPort)
+	{
+		IRCConnection connection = new IRCConnection(server);
+		connection.socksProxy = socksProxy;
+		connection.socksPort = socksPort;
+		if(!nick.isEmpty())
+			connection.nick = nick;
+		for(String channel : channels)
+			connection.channels.add(channel);
+		(new Thread(connection)).start();
+		connections.add(connection);
+	}
+	
+	public void disconnect(String server)
+	{
+		for(IRCConnection connection : connections)
+		{
+			if(connection.hostname.equalsIgnoreCase(server))
+			{
+				connection.running = false;
+				connection.parser.add("");
+			}	
+		}
 	}
 	
 	public void command(String inputString)

@@ -197,7 +197,7 @@ public class MessageParser implements Runnable
 	}
 	public void onCommand(String source, String destination, String command, String message)
 	{
-		System.out.println("Recieved command \"" + command + "\" from \"" + source + "\"" + (message.isEmpty() ? " with arguments \"" + message + "\"" : ""));
+		System.out.println("Recieved command \"" + command + "\" from \"" + source + "\"" + " in \"" + destination + "\"" + (message.isEmpty() ? " with arguments \"" + message + "\"" : ""));
 		boolean allowed = source.isEmpty();
 		if(source.indexOf('!') != -1)
 			for(String owner : Main.owners)
@@ -220,22 +220,74 @@ public class MessageParser implements Runnable
 		else if(command.equalsIgnoreCase("JOIN") && !message.isEmpty())
 			connection.output.println("JOIN " + message);
 		else if(command.equalsIgnoreCase("PART"))
+		{
+			if(message.isEmpty())
+				message = destination;
 			connection.output.println("PART " + message);
+		}
 		else if(command.equalsIgnoreCase("EMPTY"))
 		{
 			queue.messages.clear();
 			privmsg(destination, "Queue emptied");
 		}
+		else if(command.equalsIgnoreCase("SAY"))
+		{
+			privmsg(destination, message);
+		}
 		else if(command.equalsIgnoreCase("MSG"))
 		{
-			
+			int splitIndex = message.indexOf(' ');
+			if(splitIndex != -1)
+			{
+				destination = message.substring(0, splitIndex);
+				message = message.substring(splitIndex + 1);
+			}
+			else
+				message = "Syntax: " + connection.prefix + "MSG <destination> <message>";
 			privmsg(destination, message);
+		}
+		else if(command.equalsIgnoreCase("CONNECT"))
+		{
+			String server = message;
+			String socksProxy = "";
+			int socksPort = 0;
+			int splitIndex = message.indexOf(' ');
+			if(splitIndex != -1)
+			{
+				server = message.substring(0, splitIndex);
+				message = message.substring(splitIndex + 1);
+				splitIndex = message.indexOf(' ');
+				if(splitIndex != -1)
+				{
+					socksProxy = message.substring(0, splitIndex);
+					message = message.substring(splitIndex + 1);
+					try
+					{
+						socksPort = Integer.parseInt(message);
+					}
+					catch(NumberFormatException e){}
+				}
+				IRC ircChat = (IRC) Main.chats.get("irc");
+				if(socksPort == 0)
+					ircChat.connect(server);
+				else
+					ircChat.connect(server, new String[]{}, socksProxy, socksPort);
+			}
+		}
+		else if(command.equalsIgnoreCase("DISCONNECT"))
+		{
+			((IRC) Main.chats.get("irc")).disconnect(message);
+		}
+		else if(command.equalsIgnoreCase("G"))
+		{
+				Main.globalCommand(message);
 		}
 	}
 
 
 	public void privmsg(String destination, String message)
 	{
+		System.out.println("[" + connection.hostname + "] " + "[" + destination + "] Saying " + message);
 		queue.add("PRIVMSG " + destination + " :" + message);
 	}
 	public void notice(String destination, String message)

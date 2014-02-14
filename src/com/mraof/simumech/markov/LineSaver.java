@@ -20,7 +20,7 @@ public class LineSaver implements Runnable
 				Thread.sleep(60000);
 			} catch (InterruptedException e) {System.out.println("Autosave forced to wake up, saving");}
 			this.markovChain.save();
-			System.out.println("Saved");
+//			System.out.println("Saved");
 		} while(Main.running);
 	}
 

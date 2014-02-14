@@ -78,6 +78,8 @@ public class SkypeListener implements ChatMessageListener, Runnable
 
 			if(command.equals("SAY"))
 				chatMessage.getChat().send(message);
+			if(command.equals("G"))
+				Main.globalCommand(message);
 		} catch (SkypeException e) {
 			e.printStackTrace();
 		}

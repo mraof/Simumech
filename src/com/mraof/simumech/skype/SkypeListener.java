@@ -20,7 +20,7 @@ public class SkypeListener implements ChatMessageListener, Runnable
 	ArrayList<String> ignored = new ArrayList<String>();
 	String commandPrefix = "$";
 
-	public SkypeListener(SkypeBot parent) 
+	public SkypeListener(SkypeBot parent)
 	{
 		this.parent = parent;
 		ignored.add("rubib-bot");
@@ -32,12 +32,13 @@ public class SkypeListener implements ChatMessageListener, Runnable
 		{
 			try {
 				ChatMessage message = messages.poll(10, TimeUnit.SECONDS);
-				if(message == null || !message.getStatus().equals(ChatMessage.Status.RECEIVED))
+				if(message != null)
 				{
-					//System.out.println("[Skype] Ignoring message because " + (message == null ? "it is null" : "the status is " + message.getStatus()));
-					continue;
+					if(!message.getSender().getId().equals(Skype.getProfile().getId()))
+						Main.markovChain.addLine(message.getContent());
+					if(message.getStatus().equals(ChatMessage.Status.RECEIVED))
+						onMessage(message);
 				}
-				onMessage(message);
 
 			} catch(InterruptedException e){Thread.currentThread().interrupt();break;}
 			catch (SkypeException e) {e.printStackTrace();}
@@ -52,10 +53,9 @@ public class SkypeListener implements ChatMessageListener, Runnable
 
 			if(message.getContent().startsWith(commandPrefix))
 				onCommand(message);
-			else if(!ignored.contains(message.getSenderId()) && (message.getChat().getAllMembers().length <= 2 || (message.getContent().contains(Skype.getProfile().getFullName()))))
+			else if(!ignored.contains(message.getSenderId()) && (message.getChat().getAllMembers().length <= 2 || (message.getContent().toUpperCase().contains(Skype.getProfile().getFullName().toUpperCase()))))
 			{
 				message.getChat().send(Main.markovChain.reply(message.getContent(), Skype.getProfile().getFullName(), message.getSenderDisplayName()));
-				Main.markovChain.addLine(message.getContent());
 			}
 		} catch (SkypeException e) {e.printStackTrace();}
 	}
@@ -76,10 +76,20 @@ public class SkypeListener implements ChatMessageListener, Runnable
 				message = "";
 			}
 
-			if(command.equals("SAY"))
+			if(command.equalsIgnoreCase("SAY"))
 				chatMessage.getChat().send(message);
-			if(command.equals("G"))
-				Main.globalCommand(message);
+			else if(command.equalsIgnoreCase("G"))
+			{
+				String response = Main.globalCommand(message);
+				if(!response.isEmpty())
+					chatMessage.getChat().send(response);
+			}
+			else if(command.equalsIgnoreCase("M"))
+			{
+				String response = Main.markovChain.command(message);
+				if(!response.isEmpty())
+					chatMessage.getChat().send(response);
+			}
 		} catch (SkypeException e) {
 			e.printStackTrace();
 		}

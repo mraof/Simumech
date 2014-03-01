@@ -3,7 +3,7 @@ package com.mraof.simumech.markov;
 public class Word 
 {
 	String string;
-	int count = 1;
+	private int count = 1;
 	
 	public Word(String string) 
 	{

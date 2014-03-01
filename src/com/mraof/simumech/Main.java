@@ -13,13 +13,14 @@ public class Main
 	public static String clientName = "Simumech";
 	public static String version = "0";
 
-	public static String[] owners = {"Mraof"};
+	public static String[] owners = {"Mraof","Mraoffle"};
 	public static MarkovChain markovChain;
 	public static boolean useCR = true;
 	public static boolean running = true;
 	public static HashMap<String, IChat> chats = new HashMap<String, IChat>();
 	public static HashMap<String, ChatLoader> chatLoaders = new HashMap<String, ChatLoader>();
 	private static BufferedReader bufferedReader;
+	private static InputStreamReader inputStreamReader;
 
 	public static void main(String args[])
 	{
@@ -43,7 +44,8 @@ public class Main
 			chatLoaders.put("skype", chatLoader);
 		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
 
-		bufferedReader = new BufferedReader(new InputStreamReader(System.in));
+		inputStreamReader = new InputStreamReader(System.in);
+		bufferedReader = new BufferedReader(inputStreamReader);
 		String inputString;
 		if(Profiler.instrumentation != null)
 		{
@@ -74,16 +76,12 @@ public class Main
 
 	}
 
-	public static void globalCommand(String inputString) 
+	public static String globalCommand(String inputString) 
 	{
 		if(inputString.equalsIgnoreCase("QUIT"))
 		{
 			running = false;
-			try {
-				bufferedReader.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			};
+				System.in.notifyAll();
 		}
 		int splitIndex = inputString.indexOf(' ');
 		if(splitIndex != -1)
@@ -92,7 +90,8 @@ public class Main
 			inputString = inputString.substring(splitIndex + 1);
 			if(chats.containsKey(firstWord))
 				chats.get(firstWord).command(inputString);
-			
+			if(firstWord.equalsIgnoreCase("MARKOV"))
+				return markovChain.command(inputString);
 			if(firstWord.equals("reload"))
 			{
 				IChat chat = chats.get(inputString);	
@@ -138,5 +137,6 @@ public class Main
 				}
 			}
 		}
+		return "";
 	}
 }

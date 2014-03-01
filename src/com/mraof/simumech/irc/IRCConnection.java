@@ -59,14 +59,9 @@ public class IRCConnection implements Runnable
 			}
 			output = new PrintWriter(socket.getOutputStream(), true);
 			in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-		} catch (UnknownHostException e) {
-			e.printStackTrace();
-			return;
-		} catch (ConnectException e) {
+		} catch (Exception e) {
 			System.err.println("Failed to connect: " + e.getMessage());
-			return;
-		}catch (IOException e) {
-			e.printStackTrace();
+			IRC.connections.remove(this);
 			return;
 		}
 		running = true;

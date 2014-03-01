@@ -9,8 +9,10 @@ public class IntMap<L, S>
 	ArrayList<S> list = new ArrayList<S>();
 	HashMap<L, Integer> map = new HashMap<L, Integer>();
 	
-	public S get(int index)
+	public S get(Integer index)
 	{
+		if(index == null)
+			return null;
 		return list.get(index);
 	}
 	
@@ -26,6 +28,10 @@ public class IntMap<L, S>
 		list.add(value);
 		map.put(key, list.size() - 1);
 		return list.size() - 1;
+	}
+	public int size()
+	{
+		return list.size();
 	}
 	
 }

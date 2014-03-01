@@ -1,10 +1,12 @@
 package com.mraof.simumech.irc;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import com.mraof.simumech.Main;
+import com.mraof.simumech.Util;
 
 public class MessageParser implements Runnable
 {
@@ -44,7 +46,7 @@ public class MessageParser implements Runnable
 			return;
 		}
 
-		//		System.out.println(fullMessage);
+		//		println(fullMessage);
 
 		if(type.equals("001"))
 		{
@@ -54,8 +56,9 @@ public class MessageParser implements Runnable
 		}
 		if(type.equalsIgnoreCase("433"))
 		{
-			System.out.println("Nick already in use, using " + connection.nick + "_");
+			println("Nick already in use, using " + connection.nick + "_");
 			connection.nick = connection.nick + "_";
+			connection.output.println("NICK " + connection.nick);
 			return;
 		}
 
@@ -76,17 +79,17 @@ public class MessageParser implements Runnable
 		if(type.equalsIgnoreCase("INVITE"))
 		{
 			join(message);
-			System.out.println(connection.hostname + ": Invited to " + message);
+			println(connection.hostname + ": Invited to " + message);
 			isHandled = true;
 		}
 		if(type.equalsIgnoreCase("NICK"))
 		{
-			System.out.println(source + " is now known as " + message);
+			println(source + " is now known as " + message);
 			isHandled = true;
 		}
 
 		if(!isHandled)
-			System.out.printf("Type: %s, source: %s, parameters: %s, message: %s\n", type, source, parameters, message);
+			printf("Type: %s, source: %s, parameters: %s, message: %s\n", type, source, parameters, message);
 	}
 
 	public void onMessage(String source, String destination, String message)
@@ -127,9 +130,10 @@ public class MessageParser implements Runnable
 			return;
 		}
 
-		//		System.out.println("PRIVMSG " + destination + " :" + message);
-		if(message.contains(connection.nick))
+		//		println("PRIVMSG " + destination + " :" + message);
+		if(message.toLowerCase().contains(connection.nick.toLowerCase()))
 				privmsg(destination, Main.markovChain.reply(message, connection.nick, sourceNick));
+		Main.markovChain.addLine(message);
 	}
 	public boolean onCTCP(String source, String destination, String message)
 	{
@@ -153,7 +157,7 @@ public class MessageParser implements Runnable
 
 		String replyDestination = source.substring(0, source.indexOf('!'));
 
-		System.out.printf("CTCP %s to %s from %s with message %s\n", type, destination, source, message);
+		printf("CTCP %s to %s from %s with message %s\n", type, destination, source, message);
 		if(type.equalsIgnoreCase("PING"))
 			ctcpReply(replyDestination, "PING", message);
 		if(type.equalsIgnoreCase("VERSION"))
@@ -197,7 +201,7 @@ public class MessageParser implements Runnable
 	}
 	public void onCommand(String source, String destination, String command, String message)
 	{
-		System.out.println("Recieved command \"" + command + "\" from \"" + source + "\"" + " in \"" + destination + "\"" + (message.isEmpty() ? " with arguments \"" + message + "\"" : ""));
+		println("Recieved command \"" + command + "\" from \"" + source + "\"" + " in \"" + destination + "\"" + (message.isEmpty() ? " with arguments \"" + message + "\"" : ""));
 		boolean allowed = source.isEmpty();
 		if(source.indexOf('!') != -1)
 			for(String owner : Main.owners)
@@ -209,7 +213,7 @@ public class MessageParser implements Runnable
 
 		if(!allowed)
 		{
-			System.out.println("User " + source + " attempted to use " + command.toUpperCase());
+			println("User " + source + " attempted to use " + command.toUpperCase());
 			return;
 		}
 
@@ -246,6 +250,11 @@ public class MessageParser implements Runnable
 				message = "Syntax: " + connection.prefix + "MSG <destination> <message>";
 			privmsg(destination, message);
 		}
+		else if(command.equalsIgnoreCase("NICK"))
+		{
+			connection.nick = message;
+			connection.output.println("NICK " + connection.nick);
+		}
 		else if(command.equalsIgnoreCase("CONNECT"))
 		{
 			String server = message;
@@ -275,20 +284,26 @@ public class MessageParser implements Runnable
 			}
 		}
 		else if(command.equalsIgnoreCase("DISCONNECT"))
-		{
 			((IRC) Main.chats.get("irc")).disconnect(message);
-		}
 		else if(command.equalsIgnoreCase("G"))
-		{
 				Main.globalCommand(message);
+		else if(command.equalsIgnoreCase("M"))
+		{
+			String output = Main.markovChain.command(message);
+			if(!output.isEmpty())
+				privmsg(destination, output);
 		}
 	}
 
 
 	public void privmsg(String destination, String message)
 	{
-		System.out.println("[" + connection.hostname + "] " + "[" + destination + "] Saying " + message);
-		queue.add("PRIVMSG " + destination + " :" + message);
+		ArrayList<String> messages = Util.split(message, "\n");
+		for(String currentMessage : messages)
+		{
+			println("[" + destination + "] Saying " + currentMessage);
+			queue.add("PRIVMSG " + destination + " :" + currentMessage);
+		}
 	}
 	public void notice(String destination, String message)
 	{
@@ -324,5 +339,14 @@ public class MessageParser implements Runnable
 	{
 		if(message != null)
 			messages.add(message);
+	}
+	
+	public void println(String string)
+	{
+		System.out.println("[IRC] [" + connection.hostname + "] " + string);
+	}
+	public void printf(String string, Object... paramaters)
+	{
+		
 	}
 }

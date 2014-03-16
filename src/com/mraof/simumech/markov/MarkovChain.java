@@ -6,11 +6,9 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.lang.instrument.Instrumentation;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Random;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -56,8 +54,12 @@ public class MarkovChain
 			for(String currentLine : splitLines)
 				if(!lines.contains(currentLine))
 					lines.add(currentLine);
+				else
+					continue;
 			ArrayList<String> currentWords = Util.split(line);
 			String previousWord = "";
+			ArrayList<Integer> pairList = null;
+			ArrayList<Integer> wordList = null;
 			for(int i = 0; i < currentWords.size() - 1; i++)
 			{
 				String currentWord = Util.selectivelyLowerCase(currentWords.get(i));
@@ -69,13 +71,13 @@ public class MarkovChain
 				else
 					words.get(wordIndex).increment();
 
-				ArrayList<Integer> pairList = wordPairsNext.get(pair);
+				pairList = wordPairsNext.get(pair);
 				if(pairList == null)
 					pairList = new ArrayList<Integer>();
 				pairList.add(wordIndex);
 				wordPairsNext.put(pair, pairList);
 
-				ArrayList<Integer> wordList = wordsNext.get(currentWord);
+				wordList = wordsNext.get(currentWord);
 				if(wordList == null)
 					wordList = new ArrayList<Integer>();
 
@@ -320,6 +322,7 @@ public class MarkovChain
 	}
 	public void load()
 	{
+		long startTime = System.currentTimeMillis();
 		try {
 			BufferedReader reader = new BufferedReader(new FileReader("lines.txt"));
 			String line;
@@ -332,7 +335,9 @@ public class MarkovChain
 			System.out.println();
 			reader.close();
 		} catch (FileNotFoundException e) {e.printStackTrace();} catch (IOException e) {e.printStackTrace();}
-		System.out.printf("Loaded %d lines, %d words, %d word pairs\n", lines.size(), wordsNext.size(), wordPairsNext.size());
+		long endTime = System.currentTimeMillis();
+
+		System.out.printf("Loaded %d lines, %d words, %d word pairs in %d milliseconds\n", lines.size(), wordsNext.size(), wordPairsNext.size(), endTime - startTime);
 	}
 	public void save()
 	{

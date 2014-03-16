@@ -12,8 +12,8 @@ public class IRC implements IChat
 	
 	public IRC() 
 	{
-		connect("localhost", new String[]{"#test"});
-		connect("irc.esper.net", "sbnkalnyBeta", new String[]{"#Kenbot", "#bots"});
+		connect("localhost", new String[]{"#test","#mraof"});
+		connect("irc.esper.net", "megabnkalny", new String[]{"#Kenbot", "#bots"});
 		
 	}
 	public void connect(String server)
@@ -64,7 +64,6 @@ public class IRC implements IChat
 	public void command(String inputString)
 	{
 		
-		boolean badSyntax = true;
 		int splitIndex = inputString.indexOf(' ');
 		if(splitIndex != -1)
 		{

@@ -19,6 +19,7 @@ public class SkypeListener implements ChatMessageListener, Runnable
 	Random rand = new Random();
 	ArrayList<String> ignored = new ArrayList<String>();
 	String commandPrefix = "$";
+	String owners[] = {"mraof.null"};
 
 	public SkypeListener(SkypeBot parent)
 	{
@@ -49,21 +50,40 @@ public class SkypeListener implements ChatMessageListener, Runnable
 	{
 		try {
 			System.out.println("[Skype] " + message.getSenderDisplayName() + " (" + message.getSenderId() + "): " + message.getContent());
-			double chance = rand.nextDouble();
-
-			if(message.getContent().startsWith(commandPrefix))
-				onCommand(message);
-			else if(!ignored.contains(message.getSenderId()) && (message.getChat().getAllMembers().length <= 2 || (message.getContent().toUpperCase().contains(Skype.getProfile().getFullName().toUpperCase()))))
+			//double chance = rand.nextDouble();
+	
+			boolean commanded = false;
+			if(message.getContent().startsWith(commandPrefix) || message.getContent().toUpperCase().startsWith(Skype.getProfile().getFullName().toUpperCase()))
+				commanded = onCommand(message);
+			if(!ignored.contains(message.getSenderId()) && !commanded && (message.getChat().getAllMembers().length <= 2 || (message.getContent().toUpperCase().contains(Skype.getProfile().getFullName().toUpperCase()))))
 			{
 				message.getChat().send(Main.markovChain.reply(message.getContent(), Skype.getProfile().getFullName(), message.getSenderDisplayName()));
 			}
 		} catch (SkypeException e) {e.printStackTrace();}
 	}
-	public void onCommand(ChatMessage chatMessage)
+	public boolean onCommand(ChatMessage chatMessage)
 	{
 		try {
-			String message = chatMessage.getContent().substring(commandPrefix.length());
-			int splitIndex = message.indexOf(' ');
+			System.out.println("[Skype] Processing command " + chatMessage.getContent() + " from " + chatMessage.getSenderId());
+			int splitIndex = commandPrefix.length();
+			if(!chatMessage.getContent().startsWith(commandPrefix))
+				splitIndex = chatMessage.getContent().indexOf(' ') + 1;
+			if(splitIndex == 0)
+				return false;
+			String message = chatMessage.getContent().substring(splitIndex);
+			String response = Main.userCommand(message);
+			if(!response.isEmpty())
+			{
+				chatMessage.getChat().send(response);
+				return true;
+			}
+			boolean allowed = false;
+			for(String owner : owners)
+				if(chatMessage.getSenderId().equals(owner))
+					allowed = true;
+			if(!allowed)
+				return false;
+			splitIndex = message.indexOf(' ');
 			String command;
 			if(splitIndex != -1)
 			{
@@ -80,19 +100,23 @@ public class SkypeListener implements ChatMessageListener, Runnable
 				chatMessage.getChat().send(message);
 			else if(command.equalsIgnoreCase("G"))
 			{
-				String response = Main.globalCommand(message);
+				response = Main.globalCommand(message);
 				if(!response.isEmpty())
 					chatMessage.getChat().send(response);
 			}
 			else if(command.equalsIgnoreCase("M"))
 			{
-				String response = Main.markovChain.command(message);
+				response = Main.markovChain.command(message);
 				if(!response.isEmpty())
 					chatMessage.getChat().send(response);
 			}
+			else
+				return false;
+			return true;
 		} catch (SkypeException e) {
 			e.printStackTrace();
 		}
+		return false;
 
 	}
 

@@ -28,7 +28,7 @@ public class MessageParser implements Runnable
 		if(message.isEmpty())
 			return;
 		int splitIndex = message.indexOf(' ');
-		String fullMessage = message;
+		//String fullMessage = message;
 
 		String source = "";
 		if(message.charAt(0) == ':')
@@ -108,9 +108,16 @@ public class MessageParser implements Runnable
 				return;
 		}
 
-		if(message.startsWith(connection.prefix))
+		if(message.startsWith(connection.prefix) || message.toUpperCase().startsWith(connection.nick.toUpperCase()))
 		{
-			message = message.substring(connection.prefix.length());
+			if(message.startsWith(connection.prefix))
+				message = message.substring(connection.prefix.length());
+			else
+			{
+				int splitIndex = message.indexOf(' ');
+				if(splitIndex != -1)
+					message = message.substring(splitIndex + 1);
+			}
 			int splitIndex = message.indexOf(' ');
 			String command = "";
 			if(splitIndex == -1)
@@ -126,14 +133,16 @@ public class MessageParser implements Runnable
 			}
 
 
-			onCommand(source, destination, command, message);
-			return;
+			if(onCommand(source, destination, command, message))
+				return;
 		}
 
 		//		println("PRIVMSG " + destination + " :" + message);
 		if(message.toLowerCase().contains(connection.nick.toLowerCase()))
 				privmsg(destination, Main.markovChain.reply(message, connection.nick, sourceNick));
-		Main.markovChain.addLine(message);
+		if(!message.startsWith(connection.prefix))
+			Main.markovChain.addLine(message);
+		
 	}
 	public boolean onCTCP(String source, String destination, String message)
 	{
@@ -199,9 +208,15 @@ public class MessageParser implements Runnable
 
 		return false;
 	}
-	public void onCommand(String source, String destination, String command, String message)
+	public boolean onCommand(String source, String destination, String command, String message)
 	{
 		println("Recieved command \"" + command + "\" from \"" + source + "\"" + " in \"" + destination + "\"" + (message.isEmpty() ? " with arguments \"" + message + "\"" : ""));
+		String userResponse = Main.userCommand(command + " " + message);
+		if(!userResponse.isEmpty())
+		{
+			privmsg(destination, userResponse);
+			return true;
+		}
 		boolean allowed = source.isEmpty();
 		if(source.indexOf('!') != -1)
 			for(String owner : Main.owners)
@@ -213,8 +228,8 @@ public class MessageParser implements Runnable
 
 		if(!allowed)
 		{
-			println("User " + source + " attempted to use " + command.toUpperCase());
-			return;
+			//println("User " + source + " attempted to use " + command.toUpperCase());
+			return false;
 		}
 
 		if(command.equalsIgnoreCase("QUIT"))
@@ -293,6 +308,9 @@ public class MessageParser implements Runnable
 			if(!output.isEmpty())
 				privmsg(destination, output);
 		}
+		else
+			return false;
+		return true;
 	}
 
 

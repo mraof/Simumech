@@ -139,4 +139,34 @@ public class Main
 		}
 		return "";
 	}
+	public static String userCommand(String inputString)
+	{
+		int splitIndex = inputString.indexOf(' ');
+		if(splitIndex != -1)
+		{
+			String firstWord = inputString.substring(0, splitIndex).toLowerCase();
+			inputString = inputString.substring(splitIndex + 1);
+			switch(firstWord.toUpperCase())
+			{
+				case "CALCULATE":
+				try
+				{
+					//Process genius = Runtime.getRuntime().exec(new String[] {"genius", "--exec=" + inputString});
+					ProcessBuilder builder = new ProcessBuilder(new String[] {"genius", "--exec=" + inputString});
+					Process genius = builder.start();
+					BufferedReader reader = new BufferedReader(new InputStreamReader(genius.getInputStream()));
+					String answer = reader.readLine();
+					reader.close();
+					if(answer.length() > 500)
+						answer = "Answer too long";
+					return answer.isEmpty() ? "No answer" : answer;
+
+				} catch(Exception e) 
+				{
+					return "Not supported";
+				}
+			}
+		}
+		return "";
+	}
 }

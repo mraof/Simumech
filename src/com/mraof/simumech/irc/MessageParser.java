@@ -95,8 +95,10 @@ public class MessageParser implements Runnable
 	public void onMessage(String source, String destination, String message)
 	{
 		String sourceNick = source.substring(0, source.indexOf('!'));
+		boolean pm = false;
 		if(destination.equalsIgnoreCase(connection.nick))
 		{
+			pm = true;
 			destination = sourceNick;
 			if(destination.equalsIgnoreCase(connection.nick))
 				return;
@@ -108,16 +110,16 @@ public class MessageParser implements Runnable
 				return;
 		}
 
-		if(message.startsWith(connection.prefix) || message.toUpperCase().startsWith(connection.nick.toUpperCase()))
+		if(message.startsWith(connection.prefix))
 		{
-			if(message.startsWith(connection.prefix))
+			//if(message.startsWith(connection.prefix))
 				message = message.substring(connection.prefix.length());
-			else
+			/*else
 			{
 				int splitIndex = message.indexOf(' ');
 				if(splitIndex != -1)
 					message = message.substring(splitIndex + 1);
-			}
+			}*/
 			int splitIndex = message.indexOf(' ');
 			String command = "";
 			if(splitIndex == -1)
@@ -138,16 +140,14 @@ public class MessageParser implements Runnable
 		}
 
 		//		println("PRIVMSG " + destination + " :" + message);
-		if(message.toLowerCase().contains(connection.nick.toLowerCase()))
-				privmsg(destination, Main.markovChain.reply(message, connection.nick, sourceNick));
+		if(pm || message.toLowerCase().contains(connection.nick.toLowerCase()))
+			privmsg(destination, Main.markovChain.reply(message, connection.nick, sourceNick));
 		if(!message.startsWith(connection.prefix))
 			Main.markovChain.addLine(message);
 		
 	}
 	public boolean onCTCP(String source, String destination, String message)
 	{
-
-
 		int end;
 		if((end = message.indexOf('\u0001')) != -1)
 			message = message.substring(0, end);
@@ -231,60 +231,60 @@ public class MessageParser implements Runnable
 			//println("User " + source + " attempted to use " + command.toUpperCase());
 			return false;
 		}
-
-		if(command.equalsIgnoreCase("QUIT"))
-			connection.running = false;
-		else if(command.equalsIgnoreCase("RAW") && !message.isEmpty())
-			connection.output.println(message);
-		else if(command.equalsIgnoreCase("JOIN") && !message.isEmpty())
-			connection.output.println("JOIN " + message);
-		else if(command.equalsIgnoreCase("PART"))
+		String parts[];
+		command = command.toUpperCase();
+		switch(command)
 		{
+		case "QUIT":
+			connection.running = false;
+			break;
+		case "RAW":
+			connection.output.println(message);
+			break;
+		case "JOIN":
+			connection.output.println("JOIN " + message);
+			break;
+		case "PART":
 			if(message.isEmpty())
 				message = destination;
 			connection.output.println("PART " + message);
-		}
-		else if(command.equalsIgnoreCase("EMPTY"))
-		{
+			break;
+		case "EMPTY":
 			queue.messages.clear();
 			privmsg(destination, "Queue emptied");
-		}
-		else if(command.equalsIgnoreCase("SAY"))
-		{
+			break;
+		case "SAY":
 			privmsg(destination, message);
-		}
-		else if(command.equalsIgnoreCase("MSG"))
-		{
-			int splitIndex = message.indexOf(' ');
-			if(splitIndex != -1)
+			break;
+		case "MSG":
+			parts = Util.splitFirst(message);
+			if(!parts[1].isEmpty())
 			{
-				destination = message.substring(0, splitIndex);
-				message = message.substring(splitIndex + 1);
+				destination = parts[0];
+				message = parts[1];
 			}
 			else
 				message = "Syntax: " + connection.prefix + "MSG <destination> <message>";
 			privmsg(destination, message);
-		}
-		else if(command.equalsIgnoreCase("NICK"))
-		{
+			break;
+		case "NICK":
 			connection.nick = message;
 			connection.output.println("NICK " + connection.nick);
-		}
-		else if(command.equalsIgnoreCase("CONNECT"))
-		{
+			break;
+		case "CONNECT":
 			String server = message;
 			String socksProxy = "";
 			int socksPort = 0;
-			int splitIndex = message.indexOf(' ');
-			if(splitIndex != -1)
+			parts = Util.splitFirst(message);
+			if(!parts[1].isEmpty())
 			{
-				server = message.substring(0, splitIndex);
-				message = message.substring(splitIndex + 1);
-				splitIndex = message.indexOf(' ');
-				if(splitIndex != -1)
+				server = parts[0];
+				message = parts[1];
+				parts = Util.splitFirst(message);
+				if(!parts[1].isEmpty())
 				{
-					socksProxy = message.substring(0, splitIndex);
-					message = message.substring(splitIndex + 1);
+					socksProxy = parts[0];
+					message = parts[1];
 					try
 					{
 						socksPort = Integer.parseInt(message);
@@ -297,19 +297,23 @@ public class MessageParser implements Runnable
 				else
 					ircChat.connect(server, new String[]{}, socksProxy, socksPort);
 			}
-		}
-		else if(command.equalsIgnoreCase("DISCONNECT"))
+			break;
+		case "DISCONNECT":
 			((IRC) Main.chats.get("irc")).disconnect(message);
-		else if(command.equalsIgnoreCase("G"))
-				Main.globalCommand(message);
-		else if(command.equalsIgnoreCase("M"))
-		{
+			break;
+		case "G":
+			Main.globalCommand(message);
+			break;
+		case "M":
 			String output = Main.markovChain.command(message);
 			if(!output.isEmpty())
 				privmsg(destination, output);
-		}
-		else
+			break;
+		case "SET":
+			setFromString(message);
+		default:
 			return false;
+		}
 		return true;
 	}
 
@@ -340,6 +344,21 @@ public class MessageParser implements Runnable
 		connection.output.println("JOIN " + channel);
 	}
 
+	public void setFromString(String string)
+	{
+		String[] parts = Util.splitFirst(string);
+		String varName = parts[0].toUpperCase();
+		string = parts[1];
+		switch(varName)
+		{
+		case "PREFIX":
+			connection.prefix = string;
+			break;
+		case "NICK":
+			IRC.defaultNick = string;
+			break;
+		}
+	}
 	@Override
 	public void run() 
 	{

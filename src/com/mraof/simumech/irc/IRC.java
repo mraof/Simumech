@@ -9,6 +9,7 @@ public class IRC implements IChat
 {
 
 	public static List<IRCConnection> connections = new ArrayList<IRCConnection>();
+	public static String defaultNick = "Simumech";
 	
 	public IRC() 
 	{
@@ -86,6 +87,16 @@ public class IRC implements IChat
 				}
 				if(invalidConnection)
 					System.out.println("Not connected to " + server);
+			}
+		}
+		else
+		{
+			if(inputString.equalsIgnoreCase("CONNECTIONS"))
+			{
+				String connectionsString = "";
+				for(IRCConnection connection : connections)
+					connectionsString += connection.hostname + " ";
+				System.out.println(connectionsString);
 			}
 		}
 	}

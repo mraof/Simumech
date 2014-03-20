@@ -41,4 +41,18 @@ public class Util
 		else 
 			return string.toLowerCase();
 	}
+
+	public static String[] splitFirst(String string)
+	{
+		return splitFirst(string, " ");
+	}
+
+	public static String[] splitFirst(String string, String splitter)
+	{
+		int splitIndex = string.indexOf(splitter);
+		if(splitIndex != -1)
+			return new String[] {string.substring(0, splitIndex), string.substring(splitIndex + 1)};
+		else
+			return new String[] {string, ""};
+	}
 }

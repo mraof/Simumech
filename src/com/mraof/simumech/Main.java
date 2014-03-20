@@ -43,6 +43,12 @@ public class Main
 			chats.put("skype", (IChat) (Class.forName("com.mraof.simumech.skype.SkypeBot", false, chatLoader)).newInstance());
 			chatLoaders.put("skype", chatLoader);
 		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+		try
+		{
+			ChatLoader chatLoader = new ChatLoader();
+			chats.put("tumblr", (IChat) (Class.forName("com.mraof.simumech.tumblr.Tumblr", false, chatLoader)).newInstance());
+			chatLoaders.put("tumblr", chatLoader);
+		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
 
 		inputStreamReader = new InputStreamReader(System.in);
 		bufferedReader = new BufferedReader(inputStreamReader);
@@ -54,9 +60,20 @@ public class Main
 		}
 
 		try {
-			while(running && (inputString = bufferedReader.readLine()) != null)
+			while(running)
 			{
-				globalCommand(inputString);
+				if(bufferedReader.ready())
+				{
+					if((inputString = bufferedReader.readLine()) != null)
+						globalCommand(inputString);
+				}
+				else
+				{
+					try
+					{
+						Thread.sleep(200);
+					} catch (InterruptedException e) {e.printStackTrace();}
+				}
 				//System.out.println(markovChain.reply(inputString));
 			}
 		} catch (IOException e) {
@@ -81,7 +98,7 @@ public class Main
 		if(inputString.equalsIgnoreCase("QUIT"))
 		{
 			running = false;
-				System.in.notifyAll();
+			//System.in.notifyAll();
 		}
 		int splitIndex = inputString.indexOf(' ');
 		if(splitIndex != -1)

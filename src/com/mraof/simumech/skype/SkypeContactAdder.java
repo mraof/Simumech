@@ -23,7 +23,7 @@ public class SkypeContactAdder implements Runnable
 				if(waiting.length != 0)
 					for(Friend friend : waiting)
 						Skype.getContactList().addFriend(friend, "Accepted");
-			} catch (SkypeException e) {e.printStackTrace();} catch (InterruptedException e) {e.printStackTrace();}
+			} catch (SkypeException e) {e.printStackTrace();} catch (InterruptedException e) {}
 		}
 		System.out.println("Contact thread finished");
 	}

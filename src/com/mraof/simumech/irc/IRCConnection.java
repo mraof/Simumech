@@ -24,7 +24,7 @@ public class IRCConnection implements Runnable
 	public MessageParser parser;
 	public List<String> channels = new ArrayList<String>();
 
-	public String nick = "Simumech";
+	public String nick = IRC.defaultNick;
 	public String prefix = "$";
 	public String socksProxy = "";
 	public int socksPort = 0;
@@ -49,12 +49,11 @@ public class IRCConnection implements Runnable
 		try {
 			System.out.println("Connecting to " + hostname + " port " + port);
 			if(socksProxy.isEmpty())
-				socket = new Socket(hostname, port);
+				socket = new Socket(Proxy.NO_PROXY);
 			else
-			{
 				socket = new Socket(new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(socksProxy, socksPort)));
-				socket.connect(new InetSocketAddress(hostname, port));
-			}
+
+			socket.connect(new InetSocketAddress(hostname, port));
 			output = new PrintWriter(socket.getOutputStream(), true);
 			in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 		} catch (Exception e) {

@@ -14,7 +14,7 @@ public class IRC implements IChat
 	public IRC() 
 	{
 		connect("localhost", new String[]{"#test","#mraof"});
-		connect("irc.esper.net", "megabnkalny", new String[]{"#Kenbot", "#bots"});
+		connect("irc.esper.net", "megabnkalny", new String[]{"#bots","#mspafa","#crocmom","#badmovies"});
 		
 	}
 	public void connect(String server)

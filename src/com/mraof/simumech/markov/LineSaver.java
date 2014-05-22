@@ -22,6 +22,7 @@ public class LineSaver implements Runnable
 			this.markovChain.save();
 //			System.out.println("Saved");
 		} while(Main.running);
+		System.out.println("Line saver stopped");
 	}
 
 }

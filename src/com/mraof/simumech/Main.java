@@ -49,6 +49,13 @@ public class Main
 			chats.put("tumblr", (IChat) (Class.forName("com.mraof.simumech.tumblr.Tumblr", false, chatLoader)).newInstance());
 			chatLoaders.put("tumblr", chatLoader);
 		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+		try
+		{
+			ChatLoader chatLoader = new ChatLoader();
+			chats.put("twitter", (IChat) (Class.forName("com.mraof.simumech.twitter.TwitterChat", false, chatLoader)).newInstance());
+			chatLoaders.put("twitter", chatLoader);
+		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+
 
 		inputStreamReader = new InputStreamReader(System.in);
 		bufferedReader = new BufferedReader(inputStreamReader);
@@ -65,7 +72,7 @@ public class Main
 				if(bufferedReader.ready())
 				{
 					if((inputString = bufferedReader.readLine()) != null)
-						globalCommand(inputString);
+						System.out.println(globalCommand(inputString));
 				}
 				else
 				{
@@ -95,66 +102,70 @@ public class Main
 
 	public static String globalCommand(String inputString) 
 	{
-		if(inputString.equalsIgnoreCase("QUIT"))
+		try
 		{
-			running = false;
-			//System.in.notifyAll();
-		}
-		int splitIndex = inputString.indexOf(' ');
-		if(splitIndex != -1)
-		{
-			String firstWord = inputString.substring(0, splitIndex).toLowerCase();
-			inputString = inputString.substring(splitIndex + 1);
-			if(chats.containsKey(firstWord))
-				chats.get(firstWord).command(inputString);
-			if(firstWord.equalsIgnoreCase("MARKOV"))
-				return markovChain.command(inputString);
-			if(firstWord.equals("reload"))
+			if(inputString.equalsIgnoreCase("QUIT"))
 			{
-				IChat chat = chats.get(inputString);	
-				if(chat != null)
+				running = false;
+				//System.in.notifyAll();
+			}
+			int splitIndex = inputString.indexOf(' ');
+			if(splitIndex != -1)
+			{
+				String firstWord = inputString.substring(0, splitIndex).toLowerCase();
+				inputString = inputString.substring(splitIndex + 1);
+				if(chats.containsKey(firstWord))
+					chats.get(firstWord).command(inputString);
+				if(firstWord.equalsIgnoreCase("MARKOV"))
+					return markovChain.command(inputString);
+				if(firstWord.equals("reload"))
 				{
-					chat.quit();
-					chatLoaders.remove(inputString);
-					ChatLoader chatLoader = new ChatLoader();				
-					System.out.println("Reloading " + inputString + " (" +chat.getClass().getName() + ")");
+					IChat chat = chats.get(inputString);	
+					if(chat != null)
+					{
+						chat.quit();
+						chatLoaders.remove(inputString);
+						ChatLoader chatLoader = new ChatLoader();				
+						System.out.println("Reloading " + inputString + " (" +chat.getClass().getName() + ")");
+						try
+						{
+							chats.put(firstWord, (IChat) (Class.forName(chat.getClass().getName(), false, chatLoader)).newInstance());
+						} catch (InstantiationException e) {
+							e.printStackTrace();
+						} catch (IllegalAccessException e) {
+							e.printStackTrace();
+						} catch (ClassNotFoundException e) {
+							e.printStackTrace();
+						}
+						System.out.println("Done");
+					}
+				}
+				else if(firstWord.equals("load"))
+				{
+					splitIndex = inputString.indexOf(' ');
+					firstWord = inputString.substring(0, splitIndex).toLowerCase();
+					inputString = inputString.substring(splitIndex + 1);
 					try
 					{
-						chats.put(firstWord, (IChat) (Class.forName(chat.getClass().getName(), false, chatLoader)).newInstance());
-					} catch (InstantiationException e) {
-						e.printStackTrace();
-					} catch (IllegalAccessException e) {
-						e.printStackTrace();
-					} catch (ClassNotFoundException e) {
-						e.printStackTrace();
+						ChatLoader chatLoader = new ChatLoader();
+						chats.put(firstWord, (IChat) (Class.forName(inputString, false, chatLoader)).newInstance());
+						chatLoaders.put(firstWord, chatLoader);
+						System.out.println("Loaded " + firstWord);
+					}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+				}
+				else if(firstWord.equals("unload"))
+				{
+					IChat chat = chats.get(inputString);
+					if(chat != null)
+					{
+						chat.quit();
+						chatLoaders.remove(inputString);
 					}
-					System.out.println("Done");
 				}
 			}
-			else if(firstWord.equals("load"))
-			{
-				splitIndex = inputString.indexOf(' ');
-				firstWord = inputString.substring(0, splitIndex).toLowerCase();
-				inputString = inputString.substring(splitIndex + 1);
-				try
-				{
-					ChatLoader chatLoader = new ChatLoader();
-					chats.put(firstWord, (IChat) (Class.forName(inputString, false, chatLoader)).newInstance());
-					chatLoaders.put(firstWord, chatLoader);
-					System.out.println("Loaded " + firstWord);
-				}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
-			}
-			else if(firstWord.equals("unload"))
-			{
-				IChat chat = chats.get(inputString);
-				if(chat != null)
-				{
-					chat.quit();
-					chatLoaders.remove(inputString);
-				}
-			}
+			return "";
 		}
-		return "";
+		catch(Exception e) {e.printStackTrace(); return markovChain.reply(e.getMessage());}
 	}
 	public static String userCommand(String inputString)
 	{
@@ -166,22 +177,25 @@ public class Main
 			switch(firstWord.toUpperCase())
 			{
 				case "CALCULATE":
-				try
-				{
-					//Process genius = Runtime.getRuntime().exec(new String[] {"genius", "--exec=" + inputString});
-					ProcessBuilder builder = new ProcessBuilder(new String[] {"genius", "--exec=" + inputString});
-					Process genius = builder.start();
-					BufferedReader reader = new BufferedReader(new InputStreamReader(genius.getInputStream()));
-					String answer = reader.readLine();
-					reader.close();
-					if(answer.length() > 500)
-						answer = "Answer too long";
-					return answer.isEmpty() ? "No answer" : answer;
+					try
+					{
+						//Process genius = Runtime.getRuntime().exec(new String[] {"genius", "--exec=" + inputString});
+						ProcessBuilder builder = new ProcessBuilder(new String[] {"genius", "--exec=" + inputString});
+						Process genius = builder.start();
+						BufferedReader reader = new BufferedReader(new InputStreamReader(genius.getInputStream()));
+						String answer = reader.readLine();
+						reader.close();
+						if(answer.length() > 500)
+							answer = "Answer too long";
+						return answer.isEmpty() ? "No answer" : answer;
 
-				} catch(Exception e) 
-				{
-					return "Not supported";
-				}
+					} catch(Exception e) 
+					{
+						return "Not supported";
+					}
+				case "M":
+					return markovChain.command(inputString);
+
 			}
 		}
 		return "";

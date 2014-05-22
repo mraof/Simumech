@@ -53,7 +53,7 @@ public class SkypeListener implements ChatMessageListener, Runnable
 			//double chance = rand.nextDouble();
 	
 			boolean commanded = false;
-			if(message.getContent().startsWith(commandPrefix) || message.getContent().toUpperCase().startsWith(Skype.getProfile().getFullName().toUpperCase()))
+			if(message.getContent().startsWith(commandPrefix)/* || message.getContent().toUpperCase().startsWith(Skype.getProfile().getFullName().toUpperCase())*/)
 				commanded = onCommand(message);
 			if(!ignored.contains(message.getSenderId()) && !commanded && (message.getChat().getAllMembers().length <= 2 || (message.getContent().toUpperCase().contains(Skype.getProfile().getFullName().toUpperCase()))))
 			{
@@ -101,12 +101,6 @@ public class SkypeListener implements ChatMessageListener, Runnable
 			else if(command.equalsIgnoreCase("G"))
 			{
 				response = Main.globalCommand(message);
-				if(!response.isEmpty())
-					chatMessage.getChat().send(response);
-			}
-			else if(command.equalsIgnoreCase("M"))
-			{
-				response = Main.markovChain.command(message);
 				if(!response.isEmpty())
 					chatMessage.getChat().send(response);
 			}

@@ -24,7 +24,6 @@ public class MessageParser implements Runnable
 	}
 	public void onRecieved(String message)
 	{
-		boolean isHandled = false;
 		if(message.isEmpty())
 			return;
 		int splitIndex = message.indexOf(' ');
@@ -48,20 +47,6 @@ public class MessageParser implements Runnable
 
 		//		println(fullMessage);
 
-		if(type.equals("001"))
-		{
-			for(String channel : connection.channels)
-				join(channel);
-			return;
-		}
-		if(type.equalsIgnoreCase("433"))
-		{
-			println("Nick already in use, using " + connection.nick + "_");
-			connection.nick = connection.nick + "_";
-			connection.output.println("NICK " + connection.nick);
-			return;
-		}
-
 		splitIndex = message.indexOf(':');
 		String parameters = "";
 		if(splitIndex != -1)
@@ -71,25 +56,31 @@ public class MessageParser implements Runnable
 			message = message.substring(splitIndex + 1);
 		}
 
-		if(type.equalsIgnoreCase("PRIVMSG"))
+		switch(type.toUpperCase())
 		{
-			onMessage(source, parameters, message);
-			return;
-		}
-		if(type.equalsIgnoreCase("INVITE"))
-		{
-			join(message);
-			println(connection.hostname + ": Invited to " + message);
-			isHandled = true;
-		}
-		if(type.equalsIgnoreCase("NICK"))
-		{
-			println(source + " is now known as " + message);
-			isHandled = true;
+			case "001":
+				for(String channel : connection.channels)
+					join(channel);
+				return;
+			case "433":
+				println("Nick already in use, using " + connection.nick + "_");
+				connection.nick = connection.nick + "_";
+				connection.output.println("NICK " + connection.nick);
+				return;
+			case "PRIVMSG":
+				onMessage(source, parameters, message);
+				return;
+			case "INVITE":
+				join(message);
+				println(connection.hostname + ": Invited to " + message);
+				return;
+			case "NICK":
+				println(source + " is now known as " + message);
+				return;
+			default: 
+				printf("Type: %s, source: %s, parameters: %s, message: %s\n", type, source, parameters, message);
 		}
 
-		if(!isHandled)
-			printf("Type: %s, source: %s, parameters: %s, message: %s\n", type, source, parameters, message);
 	}
 
 	public void onMessage(String source, String destination, String message)
@@ -108,18 +99,18 @@ public class MessageParser implements Runnable
 		{
 			if(!onCTCP(source, destination, message.substring(1)))
 				return;
+			if(Util.splitFirst(message.substring(1))[0].equals("ACTION"))
+			{
+				printf("%s: * %s %s\n", destination, sourceNick, message.substring(7));
+				return;
+			}
+
 		}
+		printf("%s: <%s> %s\n", destination, sourceNick, message);
 
 		if(message.startsWith(connection.prefix))
 		{
-			//if(message.startsWith(connection.prefix))
-				message = message.substring(connection.prefix.length());
-			/*else
-			{
-				int splitIndex = message.indexOf(' ');
-				if(splitIndex != -1)
-					message = message.substring(splitIndex + 1);
-			}*/
+			message = message.substring(connection.prefix.length());
 			int splitIndex = message.indexOf(' ');
 			String command = "";
 			if(splitIndex == -1)
@@ -135,8 +126,11 @@ public class MessageParser implements Runnable
 			}
 
 
-			if(onCommand(source, destination, command, message))
-				return;
+			try
+			{
+				if(onCommand(source, destination, command, message))
+					return;
+			} catch (Exception e) {e.printStackTrace(); return;}
 		}
 
 		//		println("PRIVMSG " + destination + " :" + message);
@@ -144,7 +138,7 @@ public class MessageParser implements Runnable
 			privmsg(destination, Main.markovChain.reply(message, connection.nick, sourceNick));
 		if(!message.startsWith(connection.prefix))
 			Main.markovChain.addLine(message);
-		
+
 	}
 	public boolean onCTCP(String source, String destination, String message)
 	{
@@ -184,23 +178,23 @@ public class MessageParser implements Runnable
 				String response = "";
 				switch(message.toUpperCase())
 				{
-				case "PING":
-					response = "PING <timestamp>";
-					break;
-				case "CLIENTINFO":
-					response = "CLIENTINFO [command]";
-					break;
-				case "VERSION":
-					response = "VERSION";
-					break;
-				case "ACTION":
-					response = "ACTION <action message>";
-					break;
-				case "TIME":
-					response = "TIME";
-					break;
-				default:
-					response = "Unknown command";	
+					case "PING":
+						response = "PING <timestamp>";
+						break;
+					case "CLIENTINFO":
+						response = "CLIENTINFO [command]";
+						break;
+					case "VERSION":
+						response = "VERSION";
+						break;
+					case "ACTION":
+						response = "ACTION <action message>";
+						break;
+					case "TIME":
+						response = "TIME";
+						break;
+					default:
+						response = "Unknown command";	
 				}
 				ctcpReply(replyDestination, "CLIENTINFO", response);
 			}
@@ -235,84 +229,81 @@ public class MessageParser implements Runnable
 		command = command.toUpperCase();
 		switch(command)
 		{
-		case "QUIT":
-			connection.running = false;
-			break;
-		case "RAW":
-			connection.output.println(message);
-			break;
-		case "JOIN":
-			connection.output.println("JOIN " + message);
-			break;
-		case "PART":
-			if(message.isEmpty())
-				message = destination;
-			connection.output.println("PART " + message);
-			break;
-		case "EMPTY":
-			queue.messages.clear();
-			privmsg(destination, "Queue emptied");
-			break;
-		case "SAY":
-			privmsg(destination, message);
-			break;
-		case "MSG":
-			parts = Util.splitFirst(message);
-			if(!parts[1].isEmpty())
-			{
-				destination = parts[0];
-				message = parts[1];
-			}
-			else
-				message = "Syntax: " + connection.prefix + "MSG <destination> <message>";
-			privmsg(destination, message);
-			break;
-		case "NICK":
-			connection.nick = message;
-			connection.output.println("NICK " + connection.nick);
-			break;
-		case "CONNECT":
-			String server = message;
-			String socksProxy = "";
-			int socksPort = 0;
-			parts = Util.splitFirst(message);
-			if(!parts[1].isEmpty())
-			{
-				server = parts[0];
-				message = parts[1];
+			case "QUIT":
+				connection.running = false;
+				break;
+			case "RAW":
+				connection.output.println(message);
+				break;
+			case "JOIN":
+				connection.output.println("JOIN " + message);
+				break;
+			case "PART":
+				if(message.isEmpty())
+					message = destination;
+				connection.output.println("PART " + message);
+				break;
+			case "EMPTY":
+				queue.messages.clear();
+				privmsg(destination, "Queue emptied");
+				break;
+			case "SAY":
+				privmsg(destination, message);
+				break;
+			case "MSG":
 				parts = Util.splitFirst(message);
 				if(!parts[1].isEmpty())
 				{
-					socksProxy = parts[0];
+					destination = parts[0];
 					message = parts[1];
-					try
+				}
+				else
+					message = "Syntax: " + connection.prefix + "MSG <destination> <message>";
+				privmsg(destination, message);
+				break;
+			case "NICK":
+				connection.nick = message;
+				connection.output.println("NICK " + connection.nick);
+				break;
+			case "CONNECT":
+				String server = message;
+				String socksProxy = "";
+				int socksPort = 0;
+				parts = Util.splitFirst(message);
+				if(!parts[1].isEmpty())
+				{
+					server = parts[0];
+					message = parts[1];
+					parts = Util.splitFirst(message, ":");
+					if(!parts[1].isEmpty())
 					{
-						socksPort = Integer.parseInt(message);
+						socksProxy = parts[0];
+						message = parts[1];
+						try
+						{
+							socksPort = Integer.parseInt(message);
+						}
+						catch(NumberFormatException e){}
 					}
-					catch(NumberFormatException e){}
 				}
 				IRC ircChat = (IRC) Main.chats.get("irc");
 				if(socksPort == 0)
 					ircChat.connect(server);
 				else
 					ircChat.connect(server, new String[]{}, socksProxy, socksPort);
-			}
-			break;
-		case "DISCONNECT":
-			((IRC) Main.chats.get("irc")).disconnect(message);
-			break;
-		case "G":
-			Main.globalCommand(message);
-			break;
-		case "M":
-			String output = Main.markovChain.command(message);
-			if(!output.isEmpty())
-				privmsg(destination, output);
-			break;
-		case "SET":
-			setFromString(message);
-		default:
-			return false;
+
+				break;
+			case "DISCONNECT":
+				((IRC) Main.chats.get("irc")).disconnect(message);
+				break;
+			case "G":
+				Main.globalCommand(message);
+				break;
+			case "SET":
+				setFromString(message);
+				break;
+			default:
+				return false;
 		}
 		return true;
 	}
@@ -351,12 +342,12 @@ public class MessageParser implements Runnable
 		string = parts[1];
 		switch(varName)
 		{
-		case "PREFIX":
-			connection.prefix = string;
-			break;
-		case "NICK":
-			IRC.defaultNick = string;
-			break;
+			case "PREFIX":
+				connection.prefix = string;
+				break;
+			case "NICK":
+				IRC.defaultNick = string;
+				break;
 		}
 	}
 	@Override
@@ -377,13 +368,13 @@ public class MessageParser implements Runnable
 		if(message != null)
 			messages.add(message);
 	}
-	
+
 	public void println(String string)
 	{
 		System.out.println("[IRC] [" + connection.hostname + "] " + string);
 	}
-	public void printf(String string, Object... paramaters)
+	public void printf(String string, Object... parameters)
 	{
-		
+		System.out.printf("[IRC] [" + connection.hostname + "] " + string, parameters);	
 	}
 }

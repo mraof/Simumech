@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Scanner;
 
 import com.mraof.simumech.IChat;
@@ -25,20 +26,32 @@ public class Tumblr implements IChat, Runnable
 	String consumerSecret = "";
 	String oauthToken = "";
 	String oauthTokenSecret = "";
+	Random rand = new Random();
 	public Tumblr() 
 	{
-		loadKeys("tumblr.keys");
-		client = new JumblrClient(consumerKey, consumerKey);
-		client.setToken(oauthToken, oauthTokenSecret);
+		if(!loadKeys("tumblr.keys"))
+		  return;
+		  client = new JumblrClient(consumerKey, consumerKey);
+		  client.setToken(oauthToken, oauthTokenSecret);
+
 		tumblrThread = new Thread(this);
 		tumblrThread.start();
-		
+
 		//User user = client.user();
 	}
 	public void randomPost()
 	{
 		Map<String, Object> params = new HashMap<String, Object>();
-		params.put("body", Main.markovChain.randomSentence());
+		String body = Main.markovChain.randomSentence();
+		String lastSentence = body;
+		int targetSize = (int)(rand.nextFloat() * rand.nextFloat() * rand.nextFloat() * 800);
+		while(body.length() <= targetSize)
+		{
+			lastSentence = Main.markovChain.reply(lastSentence);
+			body += ". " + lastSentence;
+		}
+
+		params.put("body", body);
 		params.put("type", "text");
 		params.put("state", "queue");
 		try {
@@ -49,24 +62,21 @@ public class Tumblr implements IChat, Runnable
 	}
 	public void replyToAsk()
 	{
-		List<Post> posts = client.blogSubmissions(blogUrl);
-		for(Post post : posts)
+		try
 		{
-			System.out.println("[Tumblr] " + post.getPostUrl());
-			Map<String, Object> params = new HashMap<String, Object>();
-			params.put("type", "answer");
-			params.put("answer", Main.markovChain.reply(((AnswerPost)post).getQuestion()));
-			params.put("tags", Main.markovChain.reply(((AnswerPost)post).getQuestion()));
-			//params.put("question", ((AnswerPost)post).getQuestion());
-			//params.put("asking_url", ((AnswerPost)post).getAskingUrl());
-			//params.put("asking_name", ((AnswerPost)post).getAskingName());
-			params.put("state", "queue");
-
-			try {
+			List<Post> posts = client.blogSubmissions(blogUrl);
+			for(Post post : posts)
+			{
+				System.out.println("[Tumblr] " + post.getPostUrl());
+				Map<String, Object> params = new HashMap<String, Object>();
+				params.put("type", "answer");
+				params.put("answer", Main.markovChain.reply(((AnswerPost)post).getQuestion()));
+				params.put("tags", Main.markovChain.reply(((AnswerPost)post).getQuestion()));
+				params.put("state", "queue");
 				client.postEdit(blogUrl, post.getId(), params);
-			} catch (IOException e) {
-				e.printStackTrace();
 			}
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
 	public void setFromString(String string)
@@ -76,18 +86,22 @@ public class Tumblr implements IChat, Runnable
 		string = parts[1];
 		switch(varName)
 		{
-		case "BLOG":
-			string = string + ".tumblr.com";
-		case "URL":
-			blogUrl = string;
-			break;
+			case "BLOG":
+				string = string + ".tumblr.com";
+			case "URL":
+				blogUrl = string;
+				break;
+			case "PROXY":
+				parts = Util.splitFirst(string,":");
+				System.getProperties().setProperty("socksProxyHost", parts[0]);
+				System.getProperties().setProperty("socksProxyPort", Util.splitFirst(parts[1])[0]);
 		}
 	}
 
 	public void message(String message)
 	{
 	}
-	
+
 	public void command(String message)
 	{
 		String[] parts = Util.splitFirst(message);
@@ -95,16 +109,16 @@ public class Tumblr implements IChat, Runnable
 		message = parts[1];
 		switch(commandString)
 		{
-		case "POST":
-			randomPost();
-			return;
-		case "SET":
-			setFromString(message);
-			return;
-		case "ANSWER":
-			replyToAsk();
+			case "POST":
+				randomPost();
+				return;
+			case "SET":
+				setFromString(message);
+				return;
+			case "ANSWER":
+				replyToAsk();
 		}
-		
+
 	}
 	public void run()
 	{
@@ -125,25 +139,28 @@ public class Tumblr implements IChat, Runnable
 		tumblrThread.interrupt();
 	}
 
-	public void loadKeys(String filename)
+	public boolean loadKeys(String filename)
 	{
 		Scanner scanner;
 		try {
 			scanner = new Scanner(new File(filename));
-		ArrayList<String> keys = new ArrayList<String>();
-		while(scanner.hasNext())
-			keys.add(scanner.nextLine());
-		scanner.close();
-		if(keys.size() < 4)
-			return;
-		consumerKey = keys.get(0);
-		consumerSecret = keys.get(1);
-		oauthToken = keys.get(2);
-		oauthTokenSecret = keys.get(3);
+			ArrayList<String> keys = new ArrayList<String>();
+			while(scanner.hasNext())
+				keys.add(scanner.nextLine());
+			scanner.close();
+			if(keys.size() < 4)
+				return false;
+			consumerKey = keys.get(0);
+			consumerSecret = keys.get(1);
+			oauthToken = keys.get(2);
+			oauthTokenSecret = keys.get(3);
+			System.out.printf("%s\n%s\n%s\n%s\n", consumerKey, consumerSecret, oauthToken, oauthTokenSecret);
 
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
+			return false;
 		}
+		return true;
 	}
 
 }

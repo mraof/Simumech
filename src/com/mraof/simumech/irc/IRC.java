@@ -9,12 +9,12 @@ public class IRC implements IChat
 {
 
 	public static List<IRCConnection> connections = new ArrayList<IRCConnection>();
-	public static String defaultNick = "Simumech";
+	public static String defaultNick = "sbnkalny";
 	
 	public IRC() 
 	{
 		connect("localhost", new String[]{"#test","#mraof"});
-		connect("irc.esper.net", "megabnkalny", new String[]{"#bots","#mspafa","#crocmom","#badmovies"});
+		connect("irc.esper.net", "sbnkalny", new String[]{"#bots","#mspafa","#crocmom","#badmovies"});
 		
 	}
 	public void connect(String server)
@@ -62,7 +62,7 @@ public class IRC implements IChat
 		}
 	}
 	
-	public void command(String inputString)
+	public String command(String inputString)
 	{
 		
 		int splitIndex = inputString.indexOf(' ');
@@ -96,9 +96,11 @@ public class IRC implements IChat
 				String connectionsString = "";
 				for(IRCConnection connection : connections)
 					connectionsString += connection.hostname + " ";
-				System.out.println(connectionsString);
+				//System.out.println(connectionsString);
+				return connectionsString;
 			}
 		}
+		return "";
 	}
 	public void quit()
 	{

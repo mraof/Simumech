@@ -47,8 +47,8 @@ public class SkypeBot implements IChat
 		
 	}
 	@Override
-	public void command(String message) 
+	public String command(String message) 
 	{
-		
+		return "";
 	}
 }

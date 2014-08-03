@@ -22,6 +22,9 @@ public class Main
 	private static BufferedReader bufferedReader;
 	private static InputStreamReader inputStreamReader;
 
+	public static String[] espeakLangs = {"mb-en1", "mb-us1", "mb-us2", "mb-us3", "en", "en-us", "en-sc", "en-n", "en-rp", "en-wm"};
+	public static String[] voiceModifiers = {"", "+f1", "+f2", "+f3", "+f4", "+f5", "+m1", "+m2", "+m3", "+m4", "+m5", "+m6", "+m7", "+croak", "+whisper"};
+
 	public static void main(String args[])
 	{
 		if(args.length >= 1 && args[0].equals("noCR"));
@@ -36,25 +39,52 @@ public class Main
 			ChatLoader chatLoader = new ChatLoader();
 			chats.put("irc", (IChat) (Class.forName("com.mraof.simumech.irc.IRC", false, chatLoader)).newInstance());
 			chatLoaders.put("irc", chatLoader);
-		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
-		try
+			System.out.println("irc loaded correctly");
+		}
+		catch(InstantiationException | IllegalAccessException | ClassNotFoundException e)
 		{
+			e.printStackTrace();
+		};
+
+		System.out.println("Does it even get here?");
+
+		/*try
+		{
+			System.out.println("Attempting to load skype");
 			ChatLoader chatLoader = new ChatLoader();
 			chats.put("skype", (IChat) (Class.forName("com.mraof.simumech.skype.SkypeBot", false, chatLoader)).newInstance());
 			chatLoaders.put("skype", chatLoader);
-		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+			System.out.println("skype loaded correctly");
+		}
+		catch(InstantiationException | IllegalAccessException | ClassNotFoundException e)
+		{
+			e.printStackTrace();
+		};*/
+
 		try
 		{
 			ChatLoader chatLoader = new ChatLoader();
 			chats.put("tumblr", (IChat) (Class.forName("com.mraof.simumech.tumblr.Tumblr", false, chatLoader)).newInstance());
 			chatLoaders.put("tumblr", chatLoader);
-		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+			System.out.println("tumblr loaded correctly");
+		}
+		catch(InstantiationException | IllegalAccessException | ClassNotFoundException e)
+		{
+			e.printStackTrace();
+		};
+
 		try
 		{
 			ChatLoader chatLoader = new ChatLoader();
 			chats.put("twitter", (IChat) (Class.forName("com.mraof.simumech.twitter.TwitterChat", false, chatLoader)).newInstance());
 			chatLoaders.put("twitter", chatLoader);
-		}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
+			System.out.println("twitter loaded correctly");
+		}
+		catch(InstantiationException | IllegalAccessException | ClassNotFoundException e)
+		{
+			e.printStackTrace();
+		};
+
 
 
 		inputStreamReader = new InputStreamReader(System.in);
@@ -102,6 +132,10 @@ public class Main
 
 	public static String globalCommand(String inputString) 
 	{
+		String result = "";
+		String[] splitString = Util.splitFirst(inputString);
+		System.out.println("Global command recieved: " + inputString);
+		System.out.println(chats);
 		try
 		{
 			if(inputString.equalsIgnoreCase("QUIT"))
@@ -109,63 +143,87 @@ public class Main
 				running = false;
 				//System.in.notifyAll();
 			}
-			int splitIndex = inputString.indexOf(' ');
-			if(splitIndex != -1)
+			String firstWord = splitString[0].toLowerCase();
+			inputString = splitString[1];
+			if(chats.containsKey(firstWord))
+				return chats.get(firstWord).command(inputString);
+			if(firstWord.equalsIgnoreCase("MARKOV"))
+				return markovChain.command(inputString);
+			else if(firstWord.equals("ts"))
 			{
-				String firstWord = inputString.substring(0, splitIndex).toLowerCase();
-				inputString = inputString.substring(splitIndex + 1);
-				if(chats.containsKey(firstWord))
-					chats.get(firstWord).command(inputString);
-				if(firstWord.equalsIgnoreCase("MARKOV"))
-					return markovChain.command(inputString);
-				if(firstWord.equals("reload"))
+				try
 				{
-					IChat chat = chats.get(inputString);	
-					if(chat != null)
-					{
-						chat.quit();
-						chatLoaders.remove(inputString);
-						ChatLoader chatLoader = new ChatLoader();				
-						System.out.println("Reloading " + inputString + " (" +chat.getClass().getName() + ")");
-						try
-						{
-							chats.put(firstWord, (IChat) (Class.forName(chat.getClass().getName(), false, chatLoader)).newInstance());
-						} catch (InstantiationException e) {
-							e.printStackTrace();
-						} catch (IllegalAccessException e) {
-							e.printStackTrace();
-						} catch (ClassNotFoundException e) {
-							e.printStackTrace();
-						}
-						System.out.println("Done");
-					}
-				}
-				else if(firstWord.equals("load"))
+					String language = espeakLangs[(int) (Math.random() * espeakLangs.length)];
+					String modifier = voiceModifiers[(int) (Math.random() * voiceModifiers.length)];
+					result = markovChain.randomSentence();
+
+					ProcessBuilder builder = new ProcessBuilder(new String[] {"espeak", "-v" + language + modifier, result});
+					builder.start();
+					result = language + modifier + ": " + result; 
+
+				} catch(Exception e) 
 				{
-					splitIndex = inputString.indexOf(' ');
-					firstWord = inputString.substring(0, splitIndex).toLowerCase();
-					inputString = inputString.substring(splitIndex + 1);
-					try
-					{
-						ChatLoader chatLoader = new ChatLoader();
-						chats.put(firstWord, (IChat) (Class.forName(inputString, false, chatLoader)).newInstance());
-						chatLoaders.put(firstWord, chatLoader);
-						System.out.println("Loaded " + firstWord);
-					}catch(InstantiationException | IllegalAccessException | ClassNotFoundException e){e.printStackTrace();};
-				}
-				else if(firstWord.equals("unload"))
-				{
-					IChat chat = chats.get(inputString);
-					if(chat != null)
-					{
-						chat.quit();
-						chatLoaders.remove(inputString);
-					}
+					return "Not supported";
 				}
 			}
-			return "";
+
+			if(firstWord.equals("reload"))
+			{
+				IChat chat = chats.get(inputString);	
+				if(chat != null)
+				{
+					chat.quit();
+					chatLoaders.remove(inputString);
+					ChatLoader chatLoader = new ChatLoader();				
+					System.out.println("Reloading " + inputString + " (" +chat.getClass().getName() + ")");
+					result = "Reloading " + firstWord + "failed";
+					try
+					{
+						chats.put(firstWord, (IChat) (Class.forName(chat.getClass().getName(), false, chatLoader)).newInstance());
+						result = "Reloaded" + firstWord;
+					} catch (InstantiationException e) {
+						e.printStackTrace();
+					} catch (IllegalAccessException e) {
+						e.printStackTrace();
+					} catch (ClassNotFoundException e) {
+						e.printStackTrace();
+					}
+					System.out.println("Done");
+				}
+			}
+			else if(firstWord.equals("load"))
+			{
+				firstWord = splitString[0].toLowerCase();
+				inputString = splitString[1];
+				try
+				{
+					ChatLoader chatLoader = new ChatLoader();
+					chats.put(firstWord, (IChat) (Class.forName(inputString, false, chatLoader)).newInstance());
+					chatLoaders.put(firstWord, chatLoader);
+					System.out.println("Loaded " + firstWord);
+				}
+				catch(InstantiationException | IllegalAccessException | ClassNotFoundException e)
+				{
+					e.printStackTrace();
+				};
+
+			}
+			else if(firstWord.equals("unload"))
+			{
+				IChat chat = chats.get(inputString);
+				if(chat != null)
+				{
+					chat.quit();
+					chatLoaders.remove(inputString);
+				}
+			}
+			return result;
 		}
-		catch(Exception e) {e.printStackTrace(); return markovChain.reply(e.getMessage());}
+		catch(Exception e)
+		{
+			e.printStackTrace();
+			return markovChain.reply(e.getMessage());
+		}
 	}
 	public static String userCommand(String inputString)
 	{

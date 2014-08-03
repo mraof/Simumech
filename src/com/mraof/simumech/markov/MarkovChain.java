@@ -22,6 +22,9 @@ import com.mraof.simumech.Util;
 
 public class MarkovChain {
 	Random rand = new Random();
+	//key is triple of three words
+	HashMap<String, ArrayList<Integer>> wordTriplesNext = new HashMap<String, ArrayList<Integer>>();
+	HashMap<String, ArrayList<Integer>> wordTriplesPrevious = new HashMap<String, ArrayList<Integer>>();
 	// key is pair of two words
 	HashMap<String, ArrayList<Integer>> wordPairsNext = new HashMap<String, ArrayList<Integer>>();
 	HashMap<String, ArrayList<Integer>> wordPairsPrevious = new HashMap<String, ArrayList<Integer>>();
@@ -57,28 +60,37 @@ public class MarkovChain {
 				ArrayList<String> currentWords = Util.split(currentLine);
 				currentWords.add("");
 				String previousWord = "";
-				ArrayList<Integer> pairList = null;
+				String previousWord2 = "";
 				ArrayList<Integer> wordList = null;
 				String currentWord;
 				String nextWord;
+				String nextWord2;
 				String pair;
+				String triple;
 				for (int i = 0; i < currentWords.size() - 1; i++) {
-					currentWord = Util.selectivelyLowerCase(currentWords
-							.get(i));
-					nextWord = Util.selectivelyLowerCase(currentWords
-							.get(i + 1));
+					currentWord = Util.selectivelyLowerCase(currentWords.get(i));
+					nextWord = Util.selectivelyLowerCase(currentWords.get(i + 1));
+					nextWord2 = i < currentWords.size() - 2 ? Util.selectivelyLowerCase(currentWords.get(i + 2)) : "";
+
 					pair = previousWord.concat(" ").concat(currentWord);
+					triple = previousWord2.concat(" ").concat(pair);
 					Integer wordIndex = words.lookup(nextWord);
 					if (wordIndex == null)
 						wordIndex = words.add(new Word(nextWord), nextWord);
 					else
 						words.get(wordIndex).increment();
 
-					pairList = wordPairsNext.get(pair);
-					if (pairList == null)
-						pairList = new ArrayList<Integer>();
-					pairList.add(wordIndex);
-					wordPairsNext.put(pair, pairList);
+					wordList = wordTriplesNext.get(triple);
+					if (wordList == null)
+						wordList = new ArrayList<Integer>();
+					wordList.add(wordIndex);
+					wordTriplesNext.put(triple, wordList);
+
+					wordList = wordPairsNext.get(pair);
+					if (wordList == null)
+						wordList = new ArrayList<Integer>();
+					wordList.add(wordIndex);
+					wordPairsNext.put(pair, wordList);
 
 					wordList = wordsNext.get(currentWord);
 					if (wordList == null)
@@ -91,11 +103,19 @@ public class MarkovChain {
 						wordIndex = words.add(new Word(previousWord), previousWord);
 
 					pair = currentWord.concat(" ").concat(nextWord);
-					pairList = wordPairsNext.get(pair);
-					if (pairList == null)
-						pairList = new ArrayList<Integer>();
-					pairList.add(wordIndex);
-					wordPairsPrevious.put(pair, pairList);
+					triple = pair.concat(" ").concat(nextWord2);
+
+					wordList = wordTriplesNext.get(triple);
+					if (wordList == null)
+						wordList = new ArrayList<Integer>();
+					wordList.add(wordIndex);
+					wordTriplesPrevious.put(triple, wordList);
+
+					wordList = wordPairsNext.get(pair);
+					if (wordList == null)
+						wordList = new ArrayList<Integer>();
+					wordList.add(wordIndex);
+					wordPairsPrevious.put(pair, wordList);
 
 					wordList = wordsPrevious.get(currentWord);
 					if (wordList == null)
@@ -154,15 +174,11 @@ public class MarkovChain {
 		for (int i = 0; i < currentWords.size(); i++) {
 			String currentWord = currentWords.get(i);
 			String pairKey = previousWord + " " + currentWord;
-			int wordSize = (wordPairsNext.get(pairKey) != null ? wordPairsNext.get(pairKey).size() : 0)
-				+ (wordPairsPrevious.get(pairKey) != null ? wordPairsPrevious.size() : 0);
 			int bestSize = (wordPairsNext.get(bestWordPair) != null ? wordPairsNext.get(bestWordPair).size() : 0)
 				+ (wordPairsPrevious.get(bestWordPair) != null ? wordPairsPrevious.size() : 0);
 			if(bestSize == 0) 
 				bestWordPair = pairKey;
 
-			wordSize = (wordsNext.get(currentWord) != null ? wordsNext.get(currentWord).size() : 0) 
-				+ (wordsPrevious.get(currentWord) != null ? wordsPrevious.size() : 0);
 			bestSize = (wordsNext.get(bestWord) != null ? wordsNext.get(bestWord).size() : 0)
 				+ (wordsPrevious.get(bestWord) != null ? wordsPrevious.size() : 0);
 			if (bestSize == 0)
@@ -191,10 +207,13 @@ public class MarkovChain {
 			sentence.add(currentWords.get(0));
 
 		String nextWord = sentence.size() > 1 ? sentence.getLast() : "";
+		String nextWord2 = "";
 
+		//Add triple support for repeat prevention?
 		HashMap<String, ArrayList<Integer>> wordPairsTemp = new HashMap<String, ArrayList<Integer>>();
 		HashMap<String, ArrayList<Integer>> wordsTemp = new HashMap<String, ArrayList<Integer>>();
-		for (int size = sentence.size() - 1; size < sentence.size();) {
+		for (int size = sentence.size() - 1; size < sentence.size();) 
+		{
 			size = sentence.size();
 			String currentWord = sentence.getFirst();
 			String key = currentWord + " " + nextWord;
@@ -205,25 +224,40 @@ public class MarkovChain {
 					wordPairsTemp.put(key, new ArrayList<Integer>(wordPairsPrevious.get(key)));
 				list = wordPairsTemp.get(key);
 			}
-			if (list != null && list.size() > 0) {
-				int index = rand.nextInt(list.size());
-				String word = words.get(list.get(index)).toString();
-				list.remove(index);
+			if (list != null && list.size() > 0)
+			{
+				String triple = key + " " + nextWord2;
+				String word;
+				if(wordTriplesPrevious.get(triple) != null && wordTriplesPrevious.get(triple).size() > 0 && (rand.nextFloat() > 4F / list.size()))
+				{
+					list = wordTriplesPrevious.get(triple);
+					int index = rand.nextInt(list.size());
+					word = words.get(list.get(index)).toString();
+				}
+				else
+				{
+					int index = rand.nextInt(list.size());
+					word = words.get(list.get(index)).toString();
+					list.remove(index);
+				}
 				if(!word.isEmpty())
 				{
 					sentence.addFirst(word);
 					//System.out.println("\"" + word + " <-- \"" + key + "\"");
 				}
-			} else {
+			}
+			else
+			{
 				key = currentWord;
 				list = wordsTemp.get(key);
-				if(list == null)
+				if(sentence.size() / (double) currentWords.size() > rand.nextDouble() && list == null)
 				{
 					if(wordsPrevious.get(key) != null)
 						wordsTemp.put(key, new ArrayList<Integer>(wordsPrevious.get(key)));
 					list = wordsTemp.get(key);
 				}
-				if (list != null && list.size() > 0) {
+				if (list != null && list.size() > 0)
+				{
 					int index = rand.nextInt(list.size());
 					String word = words.get(list.get(index)).toString();
 					list.remove(index);
@@ -234,12 +268,20 @@ public class MarkovChain {
 					}
 				}
 			}
+			nextWord2 = nextWord;
 			nextWord = currentWord;
 			//System.out.println(sentence);
 
 		}
+
+		String previousWord2 = "";
 		if(sentence.size() > 1)
-			previousWord = (String) sentence.toArray()[sentence.size() - 2]; //Get second to last word
+		{
+			String[] sentenceArray = sentence.toArray(new String[sentence.size()]);
+			previousWord = sentenceArray[sentence.size() - 2]; //Get second to last word
+			if(sentence.size() > 2)
+				previousWord2 = sentenceArray[sentence.size() - 3];
+		}
 		wordPairsTemp = new HashMap<String, ArrayList<Integer>>();
 		wordsTemp = new HashMap<String, ArrayList<Integer>>();
 
@@ -272,23 +314,31 @@ public class MarkovChain {
 						wordsTemp.put(key, new ArrayList<Integer>(wordsNext.get(key)));
 					list = wordsTemp.get(key);
 				}
-				if (list != null && list.size() > 0) {
-					int index = rand.nextInt(list.size());
-					String word = words.get(list.get(index)).toString();
-					list.remove(index);
-					//System.out.println("\"" + key + "\" --> \"" + word + "\"");
+				if (list != null && list.size() > 0)
+				{
+
+					String triple = previousWord2 + " " + key;
+					String word;
+					if(wordTriplesNext.get(triple) != null && wordTriplesNext.get(triple).size() > 0 && (rand.nextFloat() > 4F / list.size()))
+					{
+						list = wordTriplesNext.get(triple);
+						int index = rand.nextInt(list.size());
+						word = words.get(list.get(index)).toString();
+					}
+					else
+					{
+						int index = rand.nextInt(list.size());
+						word = words.get(list.get(index)).toString();
+						list.remove(index);
+						//System.out.println("\"" + key + "\" --> \"" + word + "\"");
+					}
 					if(!word.isEmpty());
 					{
 						sentence.add(word);
 					}
-					int wordFrequency = 1;
-					if (wordsNext.get(word) != null)
-						wordFrequency = words.get(words.lookup(word)).getCount();
-					if (rand.nextDouble() > (wordFrequency / (double) sentence.size())) {
-						//	break;
-					}
 				}
 			}
+			previousWord2 = previousWord;
 			previousWord = currentWord;
 
 		}
@@ -298,7 +348,7 @@ public class MarkovChain {
 			replyString = sentence.pollFirst();
 		while (replyString.isEmpty());
 
-		if (!replyString.isEmpty())
+		if (!replyString.isEmpty() && !replyString.startsWith("http"))
 			replyString = replyString.substring(0, 1).toUpperCase()
 				+ replyString.substring(1);
 		if (replyString.equalsIgnoreCase(name) && !sender.isEmpty())
@@ -325,8 +375,8 @@ public class MarkovChain {
 		ArrayList<String> parts = Util.split(command);
 		switch (parts.get(0).toUpperCase()) {
 			case "STATS":
-				return "Word pairs next: " + wordPairsNext.size()
-					+ ", words next: " + wordsNext.size() + ", word pairs previous: " 
+				return "Word triples next: " + wordTriplesNext.size() + ", Word pairs next: " + wordPairsNext.size()
+					+ ", words next: " + wordsNext.size() + ", word triples previous: " + wordTriplesPrevious.size() + ", word pairs previous: " 
 					+ wordPairsPrevious.size() + ", words previous: " + wordsPrevious.size() + ", words: "
 					+ words.size() + ", lines: " + lines.size();
 			case "LINES":

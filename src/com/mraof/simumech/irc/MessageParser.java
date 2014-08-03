@@ -99,14 +99,15 @@ public class MessageParser implements Runnable
 		{
 			if(!onCTCP(source, destination, message.substring(1)))
 				return;
-			if(Util.splitFirst(message.substring(1))[0].equals("ACTION"))
+			if(Util.splitFirst(message)[0].equals("\u0001ACTION"))
 			{
-				printf("%s: * %s %s\n", destination, sourceNick, message.substring(7));
-				return;
+				message = sourceNick + " " + message.substring(8, message.length() - (message.charAt(message.length() - 1) == '\u0001' ? 1 : 2));
+				printf("%s: * %s\n", destination, message);
 			}
 
 		}
-		printf("%s: <%s> %s\n", destination, sourceNick, message);
+		else
+			printf("%s: <%s> %s\n", destination, sourceNick, message);
 
 		if(message.startsWith(connection.prefix))
 		{
@@ -297,7 +298,7 @@ public class MessageParser implements Runnable
 				((IRC) Main.chats.get("irc")).disconnect(message);
 				break;
 			case "G":
-				Main.globalCommand(message);
+				privmsg(destination, Main.globalCommand(message));
 				break;
 			case "SET":
 				setFromString(message);

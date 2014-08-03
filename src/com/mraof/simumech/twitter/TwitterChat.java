@@ -31,7 +31,7 @@ public class TwitterChat implements IChat
 	}
 
 	@Override
-	public void command(String message) 
+	public String command(String message) 
 	{
 		String splitString[] = Util.splitFirst(message);
 		switch(splitString[0].toUpperCase())
@@ -40,6 +40,7 @@ public class TwitterChat implements IChat
 			tweet();
 			break;
 		}
+		return "";
 	}
 
 	@Override

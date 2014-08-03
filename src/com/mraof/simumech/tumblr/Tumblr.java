@@ -30,9 +30,9 @@ public class Tumblr implements IChat, Runnable
 	public Tumblr() 
 	{
 		if(!loadKeys("tumblr.keys"))
-		  return;
-		  client = new JumblrClient(consumerKey, consumerKey);
-		  client.setToken(oauthToken, oauthTokenSecret);
+		return;
+		client = new JumblrClient(consumerKey, consumerKey);
+		client.setToken(oauthToken, oauthTokenSecret);
 
 		tumblrThread = new Thread(this);
 		tumblrThread.start();
@@ -74,6 +74,7 @@ public class Tumblr implements IChat, Runnable
 				params.put("tags", Main.markovChain.reply(((AnswerPost)post).getQuestion()));
 				params.put("state", "queue");
 				client.postEdit(blogUrl, post.getId(), params);
+				Main.markovChain.addLine(((AnswerPost)post).getQuestion());
 			}
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -102,8 +103,10 @@ public class Tumblr implements IChat, Runnable
 	{
 	}
 
-	public void command(String message)
+	@Override
+	public String command(String message)
 	{
+		println("Recieved command: " + message);
 		String[] parts = Util.splitFirst(message);
 		String commandString = parts[0].toUpperCase();
 		message = parts[1];
@@ -111,12 +114,15 @@ public class Tumblr implements IChat, Runnable
 		{
 			case "POST":
 				randomPost();
-				return;
+				return "";
 			case "SET":
 				setFromString(message);
-				return;
+				return "";
 			case "ANSWER":
 				replyToAsk();
+				return "";
+			default:
+				return "Invalid Tumblr command: " + commandString;
 		}
 
 	}
@@ -130,6 +136,8 @@ public class Tumblr implements IChat, Runnable
 			} catch (InterruptedException e) {
 				break;
 			}
+			if(this.rand.nextFloat() < .1)
+				this.randomPost();
 		}
 		System.out.println("[Tumblr] Thread ending");
 	}
@@ -161,6 +169,11 @@ public class Tumblr implements IChat, Runnable
 			return false;
 		}
 		return true;
+	}
+
+	public static void println(String string)
+	{
+		System.out.println("[Tumblr] " + string);
 	}
 
 }

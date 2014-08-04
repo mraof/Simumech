@@ -6,3 +6,5 @@
 *.swp
 *.keys
 /lines.txt
+build/
+.gradle/

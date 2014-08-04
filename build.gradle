@@ -1,0 +1,21 @@
+apply plugin: 'java'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile "com.github.taksan:skype-java-api:1.5"
+    compile "com.tumblr:jumblr:0.0.10"
+    compile "org.twitter4j:twitter4j-core:4.0.2"
+    testCompile "junit:junit:4.11"
+}
+
+jar {
+   manifest {
+      attributes('Main-class': 'com.mraof.simumech.Main')
+   }
+
+   // Pack Dependencies
+   from configurations.compile.collect { it.directory ? it : zipTree(it) }
+}

@@ -1,0 +1,14 @@
+[package]
+name = "simumech"
+version = "0.1.0"
+authors = ["mraof <mraof@mraof.com>"]
+
+[dependencies]
+# irc = {git = "https://github.com/aatxe/irc" }
+rand = "*"
+regex = { version = "*", features = ["pattern"] }
+lazy_static = "*"
+discord = {git = "https://github.com/SpaceManiac/discord-rs"}
+retry = "*"
+[replace]
+"mime_guess:1.8.0" = { path = "/home/mraof/mime_guess"}

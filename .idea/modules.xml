@@ -3,6 +3,8 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/Simumech.iml" filepath="$PROJECT_DIR$/Simumech.iml" />
+      <module fileurl="file://$USER_HOME$/flame-test/flame-test.iml" filepath="$USER_HOME$/flame-test/flame-test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../tumblr-rs/tumblr-rs.iml" filepath="$PROJECT_DIR$/../tumblr-rs/tumblr-rs.iml" />
     </modules>
   </component>
 </project>

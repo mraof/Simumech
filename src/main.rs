@@ -66,7 +66,7 @@ fn main() {
                                                       .join(" "),
                                                   NAME.into(),
                                                   OWNER.into(),
-                                                  vec![],
+                                                  Vec::new(),
                                                   replier))
                         .unwrap();
                     reciever.recv().unwrap()
@@ -157,6 +157,7 @@ pub enum ChainMessage {
     NextNum([u32; 3], u8, Sender<usize>),
     Next([u32; 3], u8, Sender<Option<Vec<u32>>>),
     Command(String, Sender<String>),
+    RandomWord(Sender<String>),
     Stop,
 }
 
@@ -194,31 +195,35 @@ impl MarkovChain {
         let thread = std::thread::Builder::new()
             .name(self.filename.clone())
             .spawn(move || {
-                let file = OpenOptions::new().append(true).create(true).open(&self.filename).unwrap();
+                let file = OpenOptions::new().append(true).create(true).open(&self.filename).expect("Failed to open");
                 let mut writer = LineWriter::new(file);
                 while let Ok(message) = reciever.recv() {
                     match message {
                         ChainMessage::Learn(line, names) => {
                             if self.add_line(&line, &names) {
-                                writer.write(format!("{}\n", line).as_bytes()).unwrap();
+                                writer.write(format!("{}\n", line).as_bytes()).expect("Failed to write");
                             }
                         }
                         ChainMessage::Reply(line, name, sender, names, replier) => {
-                            replier.send(self.reply(&line, &name, &sender, &names)).unwrap();
+                            replier.send(self.reply(&line, &name, &sender, &names)).expect("Could not send reply");
                         }
                         ChainMessage::NextNum(key, dir, sender) => {
                             sender.send(if dir == 0 {
-                                    self.prev.get(&key).unwrap_or(&vec![]).len()
+                                    self.prev.get(&key).unwrap_or(&Vec::new()).len()
                                 } else {
-                                    self.next.get(&key).unwrap_or(&vec![]).len()
+                                    self.next.get(&key).unwrap_or(&Vec::new()).len()
                                 })
-                                .unwrap();
+                                .expect("Could not send next num");
                         }
                         ChainMessage::Next(key, dir, sender) => {
-                            sender.send(self.next(&key, dir)).unwrap();
+                            sender.send(self.next(&key, dir)).expect("Could not send next word");
                         }
                         ChainMessage::Command(command, sender) => {
-                            sender.send(self.command(&command)).unwrap();
+                            sender.send(self.command(&command)).expect("Could not send command response");
+                        }
+                        ChainMessage::RandomWord(sender) => {
+                            let words = self.words.read().expect("Couldn't lock words for reading");
+                            sender.send(words.get(self.random.next_u32() % words.len() as u32)).expect("Could not send random word");
                         }
                         ChainMessage::Stop => break,
                     }
@@ -234,13 +239,13 @@ impl MarkovChain {
         let hash = self.hasher.finish();
         if self.tell_parent {
             if let Some(ref sender) = self.parent {
-                sender.send(ChainMessage::Learn(line.clone(), Vec::new())).unwrap();
+                sender.send(ChainMessage::Learn(line.clone(), Vec::new())).expect("Failed to make parent learn");
             }
         }
         if !self.lines.contains(&hash) {
             self.lines.insert(hash);
             let words = self.words.clone();
-            let mut words = words.write().unwrap();
+            let mut words = words.write().expect("Failed to lock words for writing");
             self.learn_line(&line, &mut words);
             true
         } else {
@@ -305,7 +310,7 @@ impl MarkovChain {
 
 
         let input: Vec<u32> = {
-            let mut words = self.words.write().unwrap();
+            let mut words = self.words.write().expect("Failed to lock words for writing");
             lowercase_nonurl(&input).split(' ').map(|word| words.lookup(word.into())).collect()
         };
 
@@ -315,14 +320,14 @@ impl MarkovChain {
 
         let mut best = [input[0], NONE, NONE];
         let mut temp_keys = vec![[END, NONE, NONE], [END, END, NONE], [END, END, END]];
-        let mut best_size = self.next.get(&best).unwrap_or(&vec![]).len();
+        let mut best_size = self.next.get(&best).unwrap_or(&Vec::new()).len();
         for word in &input {
             temp_keys[2] = [temp_keys[2][1], temp_keys[2][2], *word];
             temp_keys[1] = [temp_keys[2][1], temp_keys[2][2], NONE];
             temp_keys[0] = [temp_keys[2][2], NONE, NONE];
             for key in &temp_keys {
                 if key[0] != END && key[1] != END && key[2] != END {
-                    let temp_size = self.next.get(key).unwrap_or(&vec![]).len();
+                    let temp_size = self.next.get(key).unwrap_or(&Vec::new()).len();
                     if (temp_size > 0) && (best_size == 0 || (temp_size < best_size)) {
                         best = *key;
                         best_size = temp_size;
@@ -371,7 +376,7 @@ impl MarkovChain {
                     }
                 }
                 let key_index = {
-                    match words_temp.get(&keys[1]).unwrap_or(&vec![]).len() {
+                    match words_temp.get(&keys[1]).unwrap_or(&Vec::new()).len() {
                         0 => {
                             if (input.len() as f32) / (sentence.len() as f32) < self.random.next_f32() {
                                 break;
@@ -379,7 +384,7 @@ impl MarkovChain {
                             0
                         }
                         two_length => {
-                            if words_temp.get(&keys[2]).unwrap_or(&vec![]).len() > 0 && self.random.next_f32() > 4.0 / (two_length as f32) {
+                            if words_temp.get(&keys[2]).unwrap_or(&Vec::new()).len() > 0 && self.random.next_f32() > 4.0 / (two_length as f32) {
                                 2
                             } else {
                                 1
@@ -420,7 +425,7 @@ impl MarkovChain {
             static ref NAME_TOKEN: regex::Regex = regex::Regex::new(r"@name\d+@").unwrap();
         }
 
-        let words = self.words.read().unwrap();
+        let words = self.words.read().expect("Failed to lock words for reading");
         let mut random = self.random;
         let mut sentence = sentence.iter()
             .map(|&word| {
@@ -433,7 +438,7 @@ impl MarkovChain {
             .collect::<Vec<String>>()
             .join(" ");
 
-        if !URL_REGEX.is_match(&sentence) {
+        if sentence.len() > 0 && !URL_REGEX.is_match(&sentence) {
             let first = sentence.remove(0).to_uppercase().next().unwrap();
             sentence.insert(0, first);
         }
@@ -603,7 +608,7 @@ impl WordMap {
     }
 
     pub fn lookup(&mut self, word: String) -> u32 {
-        match self.ids.entry(word.clone()) {
+        match self.ids.entry(word.to_lowercase()) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
                 self.words.push(word.clone());

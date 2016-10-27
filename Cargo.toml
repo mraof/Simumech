@@ -10,5 +10,5 @@ regex = { version = "*", features = ["pattern"] }
 lazy_static = "*"
 discord = {git = "https://github.com/SpaceManiac/discord-rs"}
 retry = "*"
+mime = "0.2" #Otherwise mime_guess will use 0.1
 [replace]
-"mime_guess:1.8.0" = { path = "/home/mraof/mime_guess"}

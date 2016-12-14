@@ -9,8 +9,9 @@ use std::thread::Builder;
 use std::collections::HashMap;
 use retry::Retry;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::time::{Instant, Duration, UNIX_EPOCH};
+use hyper::Client;
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
     let (sender, reciever): (_, Receiver<String>) = channel();
@@ -18,6 +19,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
     Builder::new()
         .name("discord".to_string())
         .spawn(move || {
+            let hyper_client = Arc::new(Client::new());
             let discord = Discord::new_cache("config/discord_tokens", &config.next().unwrap().unwrap(), Some(&config.next().unwrap().unwrap()))
                 .expect("Login failed");
             let (mut connection, ready) = Retry::new(&mut || discord.connect(), &mut |result| result.is_ok())
@@ -38,6 +40,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let mut last_change = Instant::now();
             let mut change_time = Duration::from_secs(0);
             let (markov_sender, markov_reciever) = channel();
+            let mut name_map: HashMap<_, String> = HashMap::new();
             loop {
                 if let Ok(message) = reciever.try_recv() {
                     match message.to_lowercase().as_ref() {
@@ -91,6 +94,24 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                              channel.name,
                                              message.author.name,
                                              message.content);
+                                    if !channel.name.contains("nsfw") {
+                                        for attachment in message.attachments {
+                                            //Having dimensions means it's an image
+                                            if attachment.dimensions.is_some() {
+                                                let filename = format!("lines/discord/{}/{}.{}", server.id, attachment.id, attachment.filename.split(".").last().unwrap());
+                                                let client = hyper_client.clone();
+                                                Builder::new()
+                                                    .name(filename.clone())
+                                                    .spawn(move || {
+                                                        println!("[Discord] Downloading {}", attachment.filename);
+                                                        if let Ok(response) = client.get(&attachment.proxy_url).send() {
+                                                            let mut file = File::create(&filename).expect("Failed to create file");
+                                                            file.write_all(&response.bytes().map(|byte| byte.unwrap()).collect::<Vec<u8>>()).expect("Failed to write to file");
+                                                        }
+                                                    }).expect("Failed to spawn thread");
+                                            }
+                                        }
+                                    }
                                     connection.sync_servers(&[server.id]);
                                     channel_chains.entry(channel.id).or_insert_with(|| {
                                         let mut chain = MarkovChain::new(words.clone(),
@@ -118,8 +139,11 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                             users.push(nick);
                                         } else if let Some(ref user) = presence.user {
                                             nick = Some(user.name.clone());
+                                        } else if let Some(name) = name_map.get(&presence.user_id) {
+                                            nick = Some(name.clone());
                                         }
                                         if let Some(nick) = nick {
+                                            name_map.insert(presence.user_id, nick.clone());
                                             if presence.status == OnlineStatus::Online {
                                                 presences.push(nick);
                                             }
@@ -150,6 +174,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                         let mut chain = MarkovChain::new(words.clone(),
                                                                          &format!("lines/discord/{}/server", channel.id));
                                         chain.parent = Some(main_chain.clone());
+                                        chain.tell_parent = false;
                                         chain.thread().0
                                     });
                                     private = true;
@@ -167,15 +192,15 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             let chain = channel_chains.get(&message.channel_id).unwrap();
                             if message.content.starts_with("$m") {
                                 let mut command = message.content.clone();
-                                command.drain(..2);
-                                main_chain.send(ChainMessage::Command(command, markov_sender.clone())).unwrap();
+                                command.drain(..3);
+                                main_chain.send(ChainMessage::Command(command, markov_sender.clone())).expect("Couldn't send Command to chain");
                                 let _ = discord.send_message(&message.channel_id,
                                                              &markov_reciever.recv().unwrap(),
                                                              "",
                                                              false);
                             } else if message.content.starts_with("$cm") {
                                 let mut command = message.content.clone();
-                                command.drain(..3);
+                                command.drain(..4);
                                 chain.send(ChainMessage::Command(command, markov_sender.clone())).unwrap();
                                 let _ = discord.send_message(&message.channel_id,
                                                              &markov_reciever.recv().unwrap(),
@@ -185,13 +210,13 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 for user in message.mentions {
                                     replace_names.push(format!("{}", user.mention()));
                                 }
-                                if private || message.content.to_lowercase().contains(&name) {
+                                if private || message.content.to_lowercase().contains(&name) || weird_contains(&message.content, &name){
                                     chain.send(ChainMessage::Reply(message.content.clone(),
                                                                    name.clone(),
                                                                    message.author.name.clone(),
                                                                    users.clone(),
                                                                    markov_sender.clone()))
-                                        .unwrap();
+                                        .expect("Couldn't send Reply to chain");
                                     let response = markov_reciever.recv().unwrap();
                                     println!("Saying {}", response);
                                     let _ = discord.send_message(&message.channel_id,
@@ -199,7 +224,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                                  "",
                                                                  false);
                                 }
-                                chain.send(ChainMessage::Learn(message.content, replace_names)).unwrap();
+                                chain.send(ChainMessage::Learn(message.content, replace_names)).expect("Couldn't send Learn to chain");
                             }
                         }
                     }
@@ -209,4 +234,40 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
         })
         .unwrap();
     sender
+}
+
+fn weird_contains(message: &str, string: &str) -> bool {
+    let message = message.split_whitespace().into_iter().collect::<String>();
+    if message.len() < string.len() || string.len() == 0 {
+        return false;
+    }
+    let mut diffs: Vec<i32> = Vec::new();
+    let mut chars = string.chars();
+    let mut last = chars.next().unwrap();
+    while let Some(c) = chars.next() {
+        diffs.push(last as i32 - (c as i32));
+        last = c;
+    }
+    let mut message_diffs: Vec<i32> = Vec::new();
+    chars = message.chars();
+    last = chars.next().unwrap();
+    while let Some(c) = chars.next() {
+        message_diffs.push(last as i32 - (c as i32));
+        last = c;
+    }
+    if message_diffs.len() >= diffs.len() {
+        for i in 0..(message_diffs.len() - diffs.len() + 1) {
+            let mut matches = true;
+            for j in 0..diffs.len() {
+                matches = message_diffs[i + j] == diffs[j];
+                if !matches {
+                    break;
+                }
+            }
+            if matches {
+                return true;
+            }
+        }
+    }
+    false
 }

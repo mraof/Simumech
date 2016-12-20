@@ -12,6 +12,11 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::time::{Instant, Duration, UNIX_EPOCH};
 use hyper::Client;
+use super::regex::Regex;
+
+lazy_static! {
+    static ref MENTION_REGEX: Regex = Regex::new(r"<@!?\d+>").expect("Failed to make MENTION_REGEX");
+}
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
     let (sender, reciever): (_, Receiver<String>) = channel();
@@ -22,6 +27,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let hyper_client = Arc::new(Client::new());
             let discord = Discord::new_cache("config/discord_tokens", &config.next().unwrap().unwrap(), Some(&config.next().unwrap().unwrap()))
                 .expect("Login failed");
+            let owner_id = config.next().expect("No owner id").unwrap();
             let (mut connection, ready) = Retry::new(&mut || discord.connect(), &mut |result| result.is_ok())
                 .wait_between(200, 60000)
                 .execute()
@@ -210,6 +216,8 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 for user in message.mentions {
                                     replace_names.push(format!("{}", user.mention()));
                                 }
+                                replace_names.push("@everyone".to_string());
+                                replace_names.push("@here".to_string());
                                 if private || message.content.to_lowercase().contains(&name) || weird_contains(&message.content, &name){
                                     chain.send(ChainMessage::Reply(message.content.clone(),
                                                                    name.clone(),
@@ -217,7 +225,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                                    users.clone(),
                                                                    markov_sender.clone()))
                                         .expect("Couldn't send Reply to chain");
-                                    let response = markov_reciever.recv().unwrap();
+                                    let response = MENTION_REGEX.replace_all(&markov_reciever.recv().unwrap(), &format!("<@!{}>", owner_id)[..]);
                                     println!("Saying {}", response);
                                     let _ = discord.send_message(&message.channel_id,
                                                                  &response,

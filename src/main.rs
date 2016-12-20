@@ -7,12 +7,12 @@ extern crate retry;
 extern crate hyper;
 extern crate egg_mode;
 
-use std::collections::{HashSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::fs::OpenOptions;
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher, BuildHasher};
+use std::collections::hash_map::RandomState;
 use std::sync::{RwLock, Arc};
 use std::sync::mpsc::{channel, Sender};
 use std::io::{LineWriter, Write};
@@ -30,7 +30,8 @@ const NAME: &'static str = "sbnkalny";
 const OWNER: &'static str = "Mraof";
 
 lazy_static! {
-    static ref URL_REGEX: regex::Regex = regex::Regex::new(r"^http:|https:").unwrap();
+    static ref URL_REGEX: regex::Regex = regex::Regex::new(r"^http:|https:").expect("Failed to make URL_REGEX");
+    static ref SENTENCE_END: regex::Regex = regex::Regex::new(r"\. |\n").expect("Failed to make SENTENCE_END");
 }
 
 fn main() {
@@ -49,24 +50,25 @@ fn main() {
     let console_thread = {
             let commander = commander.clone();
             std::thread::Builder::new().name("prompt".to_string()).spawn(move || {
-                let (replier, reciever) = channel();
+                let (replier, receiver) = channel();
                 let stdin = std::io::stdin();
                 for line in stdin.lock().lines() {
-                    let line = line.unwrap();
-                    commander.send((line.clone(), replier.clone())).unwrap();
-                    println!("{}", reciever.recv().unwrap());
+                    let line = line.expect("Failed to unwrap command line");
+                    commander.send((line.clone(), replier.clone())).expect("Failed to send command");
+                    println!("{}",
+                             receiver.recv().expect("Failed to receive command response"));
                     if line.to_lowercase() == "stop" {
                         break;
                     }
                 }
             })
         }
-        .unwrap();
+        .expect("Failed to make prompt thread");
     while let Ok((command, replier)) = commands.recv() {
         let mut values = command.split(' ');
         replier.send(match values.next().unwrap_or("").to_lowercase().as_ref() {
                 "reply" => {
-                    let (replier, reciever) = channel();
+                    let (replier, receiver) = channel();
                     sender.send(ChainMessage::Reply(values.map(|string| string.to_string())
                                                       .collect::<Vec<String>>()
                                                       .join(" "),
@@ -74,21 +76,21 @@ fn main() {
                                                   OWNER.into(),
                                                   Vec::new(),
                                                   replier))
-                        .unwrap();
-                    reciever.recv().unwrap()
+                        .expect("Failed to send reply message");
+                    receiver.recv().expect("Failed to receive reply")
                 }
                 "m" => {
-                    let (replier, reciever) = channel();
+                    let (replier, receiver) = channel();
                     sender.send(ChainMessage::Command(values.map(|string| string.to_string())
                                                         .collect::<Vec<String>>()
                                                         .join(" "),
                                                     replier))
-                        .unwrap();
-                    reciever.recv().unwrap()
+                        .expect("Failed to send command message");
+                    receiver.recv().expect("Failed to receive command reply")
                 }
                 "stop" => {
-                    sender.send(ChainMessage::Stop).unwrap();
-                    replier.send("Stopped".to_string()).unwrap();
+                    sender.send(ChainMessage::Stop).expect("Failed to send stop message");
+                    replier.send("Stopped".to_string()).expect("Failed to reply with \"Stopped\"");
                     for (name, chat) in chats {
                         chat.send("stop".into()).unwrap_or_else(|_| println!("{} panicked at some point", name));
                     }
@@ -96,16 +98,16 @@ fn main() {
                 }
                 _ => "".into(),
             })
-            .unwrap();
+            .expect("Failed to reply");
     }
-    thread.join().unwrap();
-    console_thread.join().unwrap();
+    thread.join().expect("Failed to join thread");
+    console_thread.join().expect("Failed to join console thread");
 }
 
 fn replace_names(string: &str, names: &Vec<String>) -> String {
     let regexes: Vec<regex::Regex> = names.clone()
         .into_iter()
-        .map(|name| regex::Regex::new(&format!("{}{}{}", r"\b", regex::quote(&name.to_lowercase()), r"\b")).unwrap())
+        .map(|name| regex::Regex::new(&format!("{}{}{}", r"\b", regex::quote(&name.to_lowercase()), r"\b")).expect("Failed to create regex"))
         .collect();
     let mut words = Vec::new();
     for word in string.split(' ') {
@@ -151,8 +153,8 @@ pub struct MarkovChain {
     pub next: HashMap<[u32; 3], Vec<u32>>,
     pub prev: HashMap<[u32; 3], Vec<u32>>,
     pub words: Arc<RwLock<WordMap>>,
-    pub lines: HashSet<u64>,
-    pub hasher: DefaultHasher,
+    pub lines: BTreeSet<u64>,
+    pub build_hasher: RandomState,
     pub random: Isaac64Rng,
     pub filename: String,
     pub parent: Option<Sender<ChainMessage>>,
@@ -179,21 +181,22 @@ impl MarkovChain {
             next: Default::default(),
             prev: Default::default(),
             lines: Default::default(),
-            hasher: Default::default(),
+            build_hasher: Default::default(),
             filename: filename.to_string(),
             parent: None,
             tell_parent: true,
             consume: 0.0,
         };
         let path = std::path::Path::new(filename);
-        std::fs::create_dir_all(&path.parent().unwrap()).unwrap();
-        let file = OpenOptions::new().append(true).read(true).create(true).open(&path).unwrap();
+        std::fs::create_dir_all(&path.parent().expect("Failed to get parent")).expect("Failed to create directory");
+        let file = OpenOptions::new().append(true).read(true).create(true).open(&path).expect(&format!("Failed to open {:?}", &path));
         let reader = BufReader::new(file);
-        let mut words = words.write().unwrap();
+        let mut words = words.write().expect("Failed to get words for writing");
         for line in reader.lines() {
-            let line = line.unwrap();
-            line.hash(&mut markov_chain.hasher);
-            let hash = markov_chain.hasher.finish();
+            let line = line.expect("Failed to unwrap line");
+            let mut hasher = markov_chain.build_hasher.build_hasher();
+            line.to_lowercase().hash(&mut hasher);
+            let hash = hasher.finish();
             if markov_chain.lines.insert(hash) {
                 markov_chain.learn_line(&line, &mut words);
             } else {
@@ -204,13 +207,14 @@ impl MarkovChain {
     }
 
     pub fn thread(mut self) -> (Sender<ChainMessage>, std::thread::JoinHandle<()>) {
-        let (sender, reciever) = channel();
+        let (sender, receiver) = channel();
+        let filename = self.filename.clone();
         let thread = std::thread::Builder::new()
             .name(self.filename.clone())
             .spawn(move || {
                 let file = OpenOptions::new().append(true).create(true).open(&self.filename).expect("Failed to open");
                 let mut writer = LineWriter::new(file);
-                while let Ok(message) = reciever.recv() {
+                while let Ok(message) = receiver.recv() {
                     match message {
                         ChainMessage::Learn(line, names) => {
                             if self.add_line(&line, &names) {
@@ -242,27 +246,30 @@ impl MarkovChain {
                     }
                 }
             })
-            .unwrap();
+            .expect(&format!("Failed to spawn thread {}", filename));
         (sender, thread)
     }
 
     pub fn add_line(&mut self, line: &str, names: &Vec<String>) -> bool {
-        let line = replace_names(line, names);
-        line.hash(&mut self.hasher);
-        let hash = self.hasher.finish();
-        if self.tell_parent {
-            if let Some(ref sender) = self.parent {
-                sender.send(ChainMessage::Learn(line.clone(), Vec::new())).expect("Failed to make parent learn");
+        let mut result = false;
+        for line in SENTENCE_END.split(line) {
+            let line = replace_names(line, names);
+            let mut hasher = self.build_hasher.build_hasher();
+            line.to_lowercase().hash(&mut hasher);
+            let hash = hasher.finish();
+            if self.tell_parent {
+                if let Some(ref sender) = self.parent {
+                    sender.send(ChainMessage::Learn(line.clone(), Vec::new())).expect("Failed to make parent learn");
+                }
+            }
+            if self.lines.insert(hash) {
+                let words = self.words.clone();
+                let mut words = words.write().expect("Failed to lock words for writing");
+                self.learn_line(&line, &mut words);
+                result = true
             }
         }
-        if self.lines.insert(hash) {
-            let words = self.words.clone();
-            let mut words = words.write().expect("Failed to lock words for writing");
-            self.learn_line(&line, &mut words);
-            true
-        } else {
-            false
-        }
+        result
     }
 
     pub fn learn_line(&mut self, line: &str, words: &mut WordMap) {
@@ -299,6 +306,9 @@ impl MarkovChain {
     }
 
     pub fn reply(&mut self, input: &str, name: &str, sender: &str, names: &Vec<String>) -> String {
+        if input.is_empty() {
+            return "".to_string();
+        }
         let mut names = names.clone();
         let mut reply = String::new();
         if names.is_empty() {
@@ -306,14 +316,13 @@ impl MarkovChain {
             names.push(sender.clone().into());
         }
         let input = replace_names(&input, &names);
-        lazy_static! {
-            static ref SENTENCE_END: regex::Regex = regex::Regex::new(r"\. |\n").unwrap();
-        }
+
         let mut inputs: Vec<String> = SENTENCE_END.split(&input).map(|input| input.to_string()).collect();
-        let input = inputs.pop().unwrap();
+        let input = inputs.pop().expect(&format!("No input lines {:?}, {:#?}", input, inputs));
         if !inputs.is_empty() {
             reply = inputs.iter()
                 .map(|input| self.reply(&input, &name, &sender, &names))
+                .filter(|reply| !reply.is_empty())
                 .collect::<Vec<String>>()
                 .join(". ");
         }
@@ -330,8 +339,10 @@ impl MarkovChain {
 
         let random_sentence = "\0rand\0" != sender;
         let mut strict_limit = false;
-        //ideal is the length of the sentence if it's not random, unlimited if name isn't a number
-        let ideal = if random_sentence {input.len()} else {
+        // ideal is the length of the sentence if it's not random, unlimited if name isn't a number
+        let ideal = if random_sentence {
+            input.len()
+        } else {
             if name.ends_with('!') {
                 strict_limit = true;
                 name[..name.len() - 1].parse().unwrap_or(0)
@@ -341,7 +352,7 @@ impl MarkovChain {
         };
 
         let mut best = [input[0], *input.get(1).unwrap_or(&NONE), *input.get(2).unwrap_or(&NONE)];
-        //Pointless if it's generating a random sentence from a key
+        // Pointless if it's generating a random sentence from a key
         if random_sentence || input.len() > 3 {
             let mut temp_keys = vec![[END, NONE, NONE], [END, END, NONE], [END, END, END]];
             let mut best_size = self.next.get(&best).unwrap_or(&Vec::new()).len();
@@ -422,7 +433,7 @@ impl MarkovChain {
                     if list.len() > 0 {
                         let mut index = self.random.next_u32() as usize % list.len();
                         if ideal > 0 {
-                            //Want a long sentence, but it's too much too long
+                            // Want a long sentence, but it's too much too long
                             if strict_limit && sentence.len() >= ideal / (2 - dir as usize) {
                                 continue;
                             } else {
@@ -456,7 +467,7 @@ impl MarkovChain {
 
         let mut name_replacements: HashMap<String, String> = HashMap::new();
         lazy_static! {
-            static ref NAME_TOKEN: regex::Regex = regex::Regex::new(r"@name\d+@").unwrap();
+            static ref NAME_TOKEN: regex::Regex = regex::Regex::new(r"@name\d+@").expect(r"Failed to make regex @name\d+@");
         }
 
         let words = self.words.read().expect("Failed to lock words for reading");
@@ -473,7 +484,7 @@ impl MarkovChain {
             .join(" ");
 
         if sentence.len() > 0 && !URL_REGEX.is_match(&sentence) {
-            let first = sentence.remove(0).to_uppercase().next().unwrap();
+            let first = sentence.remove(0).to_uppercase().next().expect("How'd it get empty?");
             sentence.insert(0, first);
         }
 
@@ -501,13 +512,13 @@ impl MarkovChain {
             Some(list) => {
                 match self.parent {
                     Some(ref parent) => {
-                        let (sender, reciever) = channel();
+                        let (sender, receiver) = channel();
                         parent.send(ChainMessage::NextNum(*key, dir, sender)).expect("Couldn't send NextNum message to parent");
-                        let num = reciever.recv().expect("Couldn't recieve NextNum from parent");
+                        let num = receiver.recv().expect("Couldn't recieve NextNum from parent");
                         if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % (list.len() * list.len()) as u32 {
-                            let (sender, reciever) = channel();
+                            let (sender, receiver) = channel();
                             parent.send(ChainMessage::Next(*key, dir, sender)).expect("Couldn't send Next to parent");
-                            reciever.recv().expect("Couldn't recieve Next from parent")
+                            receiver.recv().expect("Couldn't recieve Next from parent")
                         } else {
                             Some(list)
                         }
@@ -518,9 +529,9 @@ impl MarkovChain {
             None => {
                 match self.parent {
                     Some(ref parent) => {
-                        let (sender, reciever) = channel();
+                        let (sender, receiver) = channel();
                         parent.send(ChainMessage::Next(*key, dir, sender)).expect("Couldn't recieve Next from parent");
-                        reciever.recv().expect("Couldn't recieve Next from parent")
+                        receiver.recv().expect("Couldn't recieve Next from parent")
                     }
                     None => None,
                 }
@@ -535,7 +546,7 @@ impl MarkovChain {
             let key = self.next.keys().skip(offset).next().unwrap_or(&empty_key);
             let mut sentence = vec![key[0], key[1], key[2]];
             sentence.retain(|&word| word > END);
-            let words = self.words.read().unwrap();
+            let words = self.words.read().expect("Failed to get words for reading");
             sentence.iter().map(|&word| words.get(word)).collect::<Vec<String>>().join(" ")
         };
         self.reply(&start, ideal, "\0rand\0", names)
@@ -545,7 +556,7 @@ impl MarkovChain {
         let parts: Vec<String> = lowercase_nonurl(command).split(' ').map(|part| part.to_string()).collect();
         match parts.get(0).map(String::as_ref) {
             Some("stats") => {
-                let words = self.words.read().unwrap();
+                let words = self.words.read().expect("Failed to get words for reading");
                 format!("Forwards keys: {}, Backwards keys: {}, words: {}, lines: {}",
                         self.next.len(),
                         self.prev.len(),
@@ -558,7 +569,7 @@ impl MarkovChain {
                     let mut next = Vec::with_capacity(3);
                     let mut unknown = false;
                     {
-                        let words = self.words.read().unwrap();
+                        let words = self.words.read().expect("Failed to get words for reading");
                         for i in 0..3 {
                             match parts.get(i + 1) {
                                 Some(ref word) => {
@@ -616,7 +627,7 @@ impl MarkovChain {
                         }
                     }
                 }
-                let words = self.words.read().unwrap();
+                let words = self.words.read().expect("Failed to get words for reading");
                 let mut key = keys[1].to_vec();
                 key.retain(|&word| word > END);
                 let key = key.iter().map(|&word| words.get(word)).collect::<Vec<String>>().join(" ");
@@ -639,18 +650,23 @@ impl MarkovChain {
                                     stats[1].best_count)
                         })
             }
-            Some("sentence") => self.random_sentence(&vec![NAME.to_string(), OWNER.to_string()], parts.get(1).unwrap_or(&"".to_string())),
-            Some("parent") => match self.parent {
-                Some(ref parent) => {
-                    let mut parts = parts.clone();
-                    parts.remove(0);
-                    let command = parts.join(" ");
-                    let (sender, reciever) = channel();
-                    parent.send(ChainMessage::Command(command, sender)).unwrap();
-                    reciever.recv().unwrap()
-                },
-                None => self.reply("No parent", "", "", &parts)
-            },
+            Some("sentence") => {
+                self.random_sentence(&vec![NAME.to_string(), OWNER.to_string()],
+                                     parts.get(1).unwrap_or(&"".to_string()))
+            }
+            Some("parent") => {
+                match self.parent {
+                    Some(ref parent) => {
+                        let mut parts = parts.clone();
+                        parts.remove(0);
+                        let command = parts.join(" ");
+                        let (sender, receiver) = channel();
+                        parent.send(ChainMessage::Command(command, sender)).expect("Failed to send command to parent");
+                        receiver.recv().expect("Failed to recieve answer from parent")
+                    }
+                    None => self.reply("No parent", "", "", &parts),
+                }
+            }
             _ => "".into(),
         }
     }
@@ -687,4 +703,19 @@ impl WordMap {
     pub fn len(&self) -> usize {
         self.words.len()
     }
+}
+
+#[test]
+fn hasher_test() {
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+    let string = "meow";
+    let build_hasher: RandomState = Default::default();
+    let mut hasher = build_hasher.build_hasher();
+    string.hash(&mut hasher);
+    let hash0 = hasher.finish();
+    let mut hasher = build_hasher.build_hasher();
+    string.hash(&mut hasher);
+    let hash1 = hasher.finish();
+    assert_eq!(hash0, hash1);
 }

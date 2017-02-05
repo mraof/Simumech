@@ -31,7 +31,7 @@ const OWNER: &'static str = "Mraof";
 
 lazy_static! {
     static ref URL_REGEX: regex::Regex = regex::Regex::new(r"^http:|https:").expect("Failed to make URL_REGEX");
-    static ref SENTENCE_END: regex::Regex = regex::Regex::new(r"\. |\n").expect("Failed to make SENTENCE_END");
+    static ref SENTENCE_END: regex::Regex = regex::Regex::new("\\. |\n").expect("Failed to make SENTENCE_END");
 }
 
 fn main() {
@@ -104,16 +104,16 @@ fn main() {
     console_thread.join().expect("Failed to join console thread");
 }
 
-fn replace_names(string: &str, names: &Vec<String>) -> String {
-    let regexes: Vec<regex::Regex> = names.clone()
+fn replace_names(string: &str, names: &[String]) -> String {
+    let regexes: Vec<regex::Regex> = names
         .into_iter()
         .map(|name| regex::Regex::new(&format!("{}{}{}", r"\b", regex::quote(&name.to_lowercase()), r"\b")).expect("Failed to create regex"))
         .collect();
     let mut words = Vec::new();
     for word in string.split(' ') {
         let mut index = regexes.len();
-        for i in 0..index {
-            if regexes[i].is_match(&word.to_lowercase()) {
+        for (i, regex) in regexes.iter().enumerate() {
+            if regex.is_match(&word.to_lowercase()) {
                 index = i;
                 break;
             }
@@ -218,7 +218,7 @@ impl MarkovChain {
                     match message {
                         ChainMessage::Learn(line, names) => {
                             if self.add_line(&line, &names) {
-                                writer.write(format!("{}\n", line).as_bytes()).expect("Failed to write");
+                                writer.write_all(format!("{}\n", line).as_bytes()).expect("Failed to write");
                             }
                         }
                         ChainMessage::Reply(line, name, sender, names, replier) => {
@@ -250,7 +250,7 @@ impl MarkovChain {
         (sender, thread)
     }
 
-    pub fn add_line(&mut self, line: &str, names: &Vec<String>) -> bool {
+    pub fn add_line(&mut self, line: &str, names: &[String]) -> bool {
         let mut result = false;
         for line in SENTENCE_END.split(line) {
             let line = replace_names(line, names);
@@ -285,43 +285,47 @@ impl MarkovChain {
         let mut next2;
         let mut next1;
         let end = line_words.len() - 2;
-        for i in 2..end {
+        for (i, &word) in line_words.iter().enumerate().take(end).skip(2) {
             if i > 2 {
                 next3 = [line_words[i - 3], line_words[i - 2], line_words[i - 1]];
                 next2 = [next3[1], next3[2], NONE];
                 next1 = [next3[2], NONE, NONE];
-                self.next.entry(next3).or_insert(Default::default()).push(line_words[i]);
-                self.next.entry(next2).or_insert(Default::default()).push(line_words[i]);
-                self.next.entry(next1).or_insert(Default::default()).push(line_words[i]);
+                self.next.entry(next3).or_insert_with(Default::default).push(word);
+                self.next.entry(next2).or_insert_with(Default::default).push(word);
+                self.next.entry(next1).or_insert_with(Default::default).push(word);
             }
             if i < end {
-                prev3 = [line_words[i + 2], line_words[i + 1], line_words[i]];
+                prev3 = [line_words[i + 2], line_words[i + 1], word];
                 prev2 = [prev3[1], prev3[2], NONE];
                 prev1 = [prev3[2], NONE, NONE];
-                self.prev.entry(prev3).or_insert(Default::default()).push(line_words[i - 1]);
-                self.prev.entry(prev2).or_insert(Default::default()).push(line_words[i - 1]);
-                self.prev.entry(prev1).or_insert(Default::default()).push(line_words[i - 1]);
+                self.prev.entry(prev3).or_insert_with(Default::default).push(line_words[i - 1]);
+                self.prev.entry(prev2).or_insert_with(Default::default).push(line_words[i - 1]);
+                self.prev.entry(prev1).or_insert_with(Default::default).push(line_words[i - 1]);
             }
         }
     }
 
-    pub fn reply(&mut self, input: &str, name: &str, sender: &str, names: &Vec<String>) -> String {
+    pub fn reply(&mut self, input: &str, name: &str, sender: &str, names: &[String]) -> String {
         if input.is_empty() {
             return "".to_string();
         }
-        let mut names = names.clone();
+        let mut names = {
+            let mut vec = Vec::new();
+            vec.extend_from_slice(names);
+            vec
+        };
         let mut reply = String::new();
         if names.is_empty() {
-            names.push(name.clone().into());
-            names.push(sender.clone().into());
+            names.push(name.into());
+            names.push(sender.into());
         }
-        let input = replace_names(&input, &names);
+        let input = replace_names(input, &names);
 
         let mut inputs: Vec<String> = SENTENCE_END.split(&input).map(|input| input.to_string()).collect();
         let input = inputs.pop().expect(&format!("No input lines {:?}, {:#?}", input, inputs));
         if !inputs.is_empty() {
             reply = inputs.iter()
-                .map(|input| self.reply(&input, &name, &sender, &names))
+                .map(|input| self.reply(input, name, sender, &names))
                 .filter(|reply| !reply.is_empty())
                 .collect::<Vec<String>>()
                 .join(". ");
@@ -342,13 +346,11 @@ impl MarkovChain {
         // ideal is the length of the sentence if it's not random, unlimited if name isn't a number
         let ideal = if random_sentence {
             input.len()
+        } else if name.ends_with('!') {
+            strict_limit = true;
+            name[..name.len() - 1].parse().unwrap_or(0)
         } else {
-            if name.ends_with('!') {
-                strict_limit = true;
-                name[..name.len() - 1].parse().unwrap_or(0)
-            } else {
-                name.parse().unwrap_or(0)
-            }
+            name.parse().unwrap_or(0)
         };
 
         let mut best = [input[0], *input.get(1).unwrap_or(&NONE), *input.get(2).unwrap_or(&NONE)];
@@ -420,7 +422,7 @@ impl MarkovChain {
                             0
                         }
                         two_length => {
-                            if words_temp.get(&keys[2]).unwrap_or(&Vec::new()).len() > 0 && self.random.next_f32() > 4.0 / (two_length as f32) {
+                            if !words_temp.get(&keys[2]).unwrap_or(&Vec::new()).is_empty() && self.random.next_f32() > 4.0 / (two_length as f32) {
                                 2
                             } else {
                                 1
@@ -430,7 +432,7 @@ impl MarkovChain {
 
                 };
                 if let Some(mut list) = words_temp.get_mut(&keys[key_index]) {
-                    if list.len() > 0 {
+                    if !list.is_empty() {
                         let mut index = self.random.next_u32() as usize % list.len();
                         if ideal > 0 {
                             // Want a long sentence, but it's too much too long
@@ -476,14 +478,14 @@ impl MarkovChain {
             .map(|&word| {
                 NAME_TOKEN.replace_all(&words.get(word), |caps: &regex::Captures| {
                     name_replacements.entry(caps[0].to_string())
-                        .or_insert(names[random.next_u32() as usize % names.len()].clone())
+                        .or_insert_with(|| names[random.next_u32() as usize % names.len()].clone())
                         .clone()
                 })
             })
             .collect::<Vec<String>>()
             .join(" ");
 
-        if sentence.len() > 0 && !URL_REGEX.is_match(&sentence) {
+        if !sentence.is_empty() && !URL_REGEX.is_match(&sentence) {
             let first = sentence.remove(0).to_uppercase().next().expect("How'd it get empty?");
             sentence.insert(0, first);
         }
@@ -539,11 +541,11 @@ impl MarkovChain {
         }
     }
 
-    pub fn random_sentence(&mut self, names: &Vec<String>, ideal: &str) -> String {
+    pub fn random_sentence(&mut self, names: &[String], ideal: &str) -> String {
         let start = {
             let offset = self.random.next_u32() as usize % self.next.len();
             let empty_key = [END, END, END];
-            let key = self.next.keys().skip(offset).next().unwrap_or(&empty_key);
+            let key = self.next.keys().nth(offset).unwrap_or(&empty_key);
             let mut sentence = vec![key[0], key[1], key[2]];
             sentence.retain(|&word| word > END);
             let words = self.words.read().expect("Failed to get words for reading");
@@ -572,8 +574,8 @@ impl MarkovChain {
                         let words = self.words.read().expect("Failed to get words for reading");
                         for i in 0..3 {
                             match parts.get(i + 1) {
-                                Some(ref word) => {
-                                    if let Some(word) = words.find(&word) {
+                                Some(word) => {
+                                    if let Some(word) = words.find(word) {
                                         next.push(*word);
                                         prev.push(*word);
                                     } else {
@@ -651,7 +653,7 @@ impl MarkovChain {
                         })
             }
             Some("sentence") => {
-                self.random_sentence(&vec![NAME.to_string(), OWNER.to_string()],
+                self.random_sentence(&[NAME.to_string(), OWNER.to_string()],
                                      parts.get(1).unwrap_or(&"".to_string()))
             }
             Some("parent") => {
@@ -682,7 +684,7 @@ impl WordMap {
 
     pub fn lookup(&mut self, word: String) -> u32 {
         match self.ids.entry(word.to_lowercase()) {
-            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
                 self.words.push(word.clone());
                 entry.insert(self.words.len() as u32 - 1);
@@ -703,19 +705,8 @@ impl WordMap {
     pub fn len(&self) -> usize {
         self.words.len()
     }
-}
 
-#[test]
-fn hasher_test() {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-    let string = "meow";
-    let build_hasher: RandomState = Default::default();
-    let mut hasher = build_hasher.build_hasher();
-    string.hash(&mut hasher);
-    let hash0 = hasher.finish();
-    let mut hasher = build_hasher.build_hasher();
-    string.hash(&mut hasher);
-    let hash1 = hasher.finish();
-    assert_eq!(hash0, hash1);
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
 }

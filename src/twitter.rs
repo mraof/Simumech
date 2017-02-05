@@ -23,9 +23,8 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let access_token = egg_mode::Token::new(config.next().unwrap().unwrap(), config.next().unwrap().unwrap());
             loop {
                 if let Ok(command) = reciever.try_recv() {
-                    match command.as_ref() {
-                        "stop" => break,
-                        _ => ()
+                    if let "stop" = command.as_ref() {
+                        break
                     }
                 }
                 let seconds = UNIX_EPOCH.elapsed().unwrap().as_secs();

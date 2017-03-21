@@ -160,6 +160,8 @@ pub struct MarkovChain {
     pub parent: Option<Sender<ChainMessage>>,
     pub tell_parent: bool,
     pub consume: f32,
+    ///Lower it is, the higher the chance of using the parent
+    pub strength: f32,
 }
 
 pub enum ChainMessage {
@@ -169,6 +171,7 @@ pub enum ChainMessage {
     Next([u32; 3], u8, Sender<Option<Vec<u32>>>),
     Command(String, Sender<String>),
     RandomWord(Sender<String>),
+    ChangeParent(Option<Sender<ChainMessage>>),
     Stop,
 }
 
@@ -186,6 +189,7 @@ impl MarkovChain {
             parent: None,
             tell_parent: true,
             consume: 0.0,
+            strength: 1.0,
         };
         let path = std::path::Path::new(filename);
         std::fs::create_dir_all(&path.parent().expect("Failed to get parent")).expect("Failed to create directory");
@@ -241,6 +245,9 @@ impl MarkovChain {
                         ChainMessage::RandomWord(sender) => {
                             let words = self.words.read().expect("Couldn't lock words for reading");
                             sender.send(words.get(self.random.next_u32() % words.len() as u32)).expect("Could not send random word");
+                        }
+                        ChainMessage::ChangeParent(parent) => {
+                            self.parent = parent;
                         }
                         ChainMessage::Stop => break,
                     }
@@ -517,7 +524,7 @@ impl MarkovChain {
                         let (sender, receiver) = channel();
                         parent.send(ChainMessage::NextNum(*key, dir, sender)).expect("Couldn't send NextNum message to parent");
                         let num = receiver.recv().expect("Couldn't recieve NextNum from parent");
-                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % (list.len() * list.len()) as u32 {
+                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % ((list.len() * list.len()) as f32 * self.strength + (1.0 - self.strength)) as u32 {
                             let (sender, receiver) = channel();
                             parent.send(ChainMessage::Next(*key, dir, sender)).expect("Couldn't send Next to parent");
                             receiver.recv().expect("Couldn't recieve Next from parent")

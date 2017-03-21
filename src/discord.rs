@@ -40,6 +40,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let mut state = State::new(ready);
             let mut server_chains = HashMap::new();
             let mut channel_chains = HashMap::new();
+            let mut user_chains = HashMap::new();
             let name = state.user().username.to_lowercase();
 /*            for server in state.servers() {
                 println!("server {:?}", server);
@@ -122,6 +123,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             }
                         }
                     }
+                    let mut nsfw = false;
                     if message.author.id != state.user().id {
                         connection.sync_calls(&[message.channel_id]);
                         let (mut replace_names, users) = match state.find_channel(message.channel_id) {
@@ -131,8 +133,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                          channel.name,
                                          author_name,
                                          content);
-                                if !channel.name.contains("nsfw") {
-                                    for attachment in message.attachments {
+                                nsfw = channel.name.contains("nsfw");
+                                if !nsfw {
+                                    for attachment in message.attachments.clone() {
                                         //Having dimensions means it's an image
                                         if attachment.dimensions.is_some() {
                                             let filename = format!("images/discord/{}/{}.{}", server.id, attachment.id, attachment.filename.split(".").last().unwrap());
@@ -161,9 +164,10 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                             chain.thread().0
                                         })
                                         .clone());
-                                    if channel.name.contains("nsfw") {
+                                    if nsfw {
                                         chain.tell_parent = false
                                     }
+                                    chain.strength = 0.7;
                                     chain.thread().0
                                 });
                                 let mut users: Vec<String> = server.members.iter().map(|member| member.nick.clone().unwrap_or_else(|| member.user.name.clone()).clone()).collect();
@@ -226,7 +230,17 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 (vec![name.clone(), author_name.clone()], vec![name.clone(), author_name.clone()])
                             }
                         };
-                        let chain = &channel_chains[&message.channel_id];
+                        let mut chain = &channel_chains[&message.channel_id];
+                        if !(private || nsfw) {
+                            let user_chain = user_chains.entry(message.author.id).or_insert_with(|| {
+                                let mut chain = MarkovChain::new(words.clone(),
+                                                                 &format!("lines/discord/users/{}", message.author.id));
+                                chain.strength = 0.3;
+                                chain.thread().0
+                            });
+                            user_chain.send(ChainMessage::ChangeParent(Some(chain.clone()))).expect("Couldn't change parent");
+                            chain = user_chain;
+                        }
                         if listen {
                             if content.starts_with("$m") {
                                 let mut command = content.clone();

@@ -84,7 +84,8 @@ fn main() {
                     sender.send(ChainMessage::Command(values.map(|string| string.to_string())
                                                         .collect::<Vec<String>>()
                                                         .join(" "),
-                                                    replier))
+                                                      Power::Cool,
+                                                      replier))
                         .expect("Failed to send command message");
                     receiver.recv().expect("Failed to receive command reply")
                 }
@@ -107,7 +108,7 @@ fn main() {
 fn replace_names(string: &str, names: &[String]) -> String {
     let regexes: Vec<regex::Regex> = names
         .into_iter()
-        .map(|name| regex::Regex::new(&format!("{}{}{}", r"\b", regex::quote(&name.to_lowercase()), r"\b")).expect("Failed to create regex"))
+        .map(|name| regex::Regex::new(&format!("{}{}{}", r"\b", regex::escape(&name.to_lowercase()), r"\b")).expect("Failed to create regex"))
         .collect();
     let mut words = Vec::new();
     for word in string.split(' ') {
@@ -169,7 +170,7 @@ pub enum ChainMessage {
     Reply(String, String, String, Vec<String>, Sender<String>),
     NextNum([u32; 3], u8, Sender<usize>),
     Next([u32; 3], u8, Sender<Option<Vec<u32>>>),
-    Command(String, Sender<String>),
+    Command(String, Power, Sender<String>),
     RandomWord(Sender<String>),
     ChangeParent(Option<Sender<ChainMessage>>),
     Stop,
@@ -203,9 +204,9 @@ impl MarkovChain {
             let hash = hasher.finish();
             if markov_chain.lines.insert(hash) {
                 markov_chain.learn_line(&line, &mut words);
-            } else {
+            } /*else {
                 println!("Duplicate line in {}: {}", path.to_string_lossy(), line)
-            }
+            }*/
         }
         markov_chain
     }
@@ -239,8 +240,8 @@ impl MarkovChain {
                         ChainMessage::Next(key, dir, sender) => {
                             sender.send(self.next(&key, dir)).expect("Could not send next word");
                         }
-                        ChainMessage::Command(command, sender) => {
-                            sender.send(self.command(&command)).expect("Could not send command response");
+                        ChainMessage::Command(command, power, sender) => {
+                            sender.send(self.command(&command, power)).expect("Could not send command response");
                         }
                         ChainMessage::RandomWord(sender) => {
                             let words = self.words.read().expect("Couldn't lock words for reading");
@@ -488,8 +489,8 @@ impl MarkovChain {
                         .or_insert_with(|| names[random.next_u32() as usize % names.len()].clone())
                         .clone()
                 })
-            })
-            .collect::<Vec<String>>()
+            }.to_string())
+            .collect::<Vec<_>>()
             .join(" ");
 
         if !sentence.is_empty() && !URL_REGEX.is_match(&sentence) {
@@ -561,7 +562,7 @@ impl MarkovChain {
         self.reply(&start, ideal, "\0rand\0", names)
     }
 
-    pub fn command(&mut self, command: &str) -> String {
+    pub fn command(&mut self, command: &str, power: Power) -> String {
         let parts: Vec<String> = lowercase_nonurl(command).split(' ').map(|part| part.to_string()).collect();
         match parts.get(0).map(String::as_ref) {
             Some("stats") => {
@@ -670,11 +671,47 @@ impl MarkovChain {
                         parts.remove(0);
                         let command = parts.join(" ");
                         let (sender, receiver) = channel();
-                        parent.send(ChainMessage::Command(command, sender)).expect("Failed to send command to parent");
+                        parent.send(ChainMessage::Command(command, power, sender)).expect("Failed to send command to parent");
                         receiver.recv().expect("Failed to recieve answer from parent")
                     }
                     None => self.reply("No parent", "", "", &parts),
                 }
+            }
+            Some("strength") => {
+                if parts.len() == 1 {
+                    self.strength.to_string()
+                } else if power == Power::Cool {
+                    if let Ok(strength) = parts[1].parse() {
+                        self.strength = strength;
+                        "".into()
+                    } else {
+                        self.reply(&parts.join(" "), "", "", &parts)
+                    }
+                } else {
+                    self.reply("Not cool enough", "", "", &parts)
+                }
+            }
+            Some("nsfw") => {
+                if power == Power::Cool {
+                    if parts.len() == 1 {
+                        (!self.tell_parent).to_string()
+                    } else {
+                        if let Ok(tell_parent) = parts[1].parse::<bool>() {
+                            self.tell_parent = !tell_parent;
+                            "".to_string()
+                        } else {
+                            self.reply(&parts.join(" "), "", "", &parts)
+                        }
+                    }
+                } else {
+                    self.reply("Not cool enough", "", "", &parts)
+                }
+            }
+            Some("filename") => {
+                self.filename.clone()
+            }
+            Some("power") => {
+                format!("{:?}", power)
             }
             _ => "".into(),
         }
@@ -706,7 +743,7 @@ impl WordMap {
     }
 
     pub fn get(&self, id: u32) -> String {
-        self.words[id as usize].clone()
+        self.words[id as usize % self.words.len()].clone()
     }
 
     pub fn len(&self) -> usize {
@@ -716,4 +753,10 @@ impl WordMap {
     pub fn is_empty(&self) -> bool {
         self.words.is_empty()
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Power {
+    Normal,
+    Cool
 }

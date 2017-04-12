@@ -5,6 +5,7 @@ use std::sync::{RwLock, Arc};
 use super::WordMap;
 use super::ChainMessage;
 use super::MarkovChain;
+use super::Power;
 use std::thread::Builder;
 use std::collections::HashMap;
 use retry::Retry;
@@ -41,13 +42,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let mut server_chains = HashMap::new();
             let mut channel_chains = HashMap::new();
             let mut user_chains = HashMap::new();
+            let nsfw_words = Arc::new(RwLock::new(WordMap::new()));
+
             let name = state.user().username.to_lowercase();
-/*            for server in state.servers() {
-                println!("server {:?}", server);
-*//*                for channel in &server.channels {
-                    println!("channel {:?}", channel)
-                }*//*
-            }*/
             let mut last_change = Instant::now();
             let mut change_time = Duration::from_secs(0);
             let (markov_sender, markov_reciever) = channel();
@@ -103,18 +100,18 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             169678500893163520 => {
                                 println!("Gambling! {:?}", message.mentions);
                                 if let Some(cap) = PIKAGIRL_PAY_REGEX.captures(&message.content) {
-                                    let amount = cap.at(1).expect("No amount captured");
-                                    let payer = cap.at(2).expect("No payer captured");
-                                    let paid = cap.at(3).expect("No paid captured");
-                                    if paid.parse::<u64>().expect("User id wasn't a number") == state.user().id.0 {
-                                        println!("{} paid {} to me~", payer, amount);
+                                    let amount = cap.get(1).expect("No amount captured");
+                                    let payer = cap.get(2).expect("No payer captured");
+                                    let paid = cap.get(3).expect("No paid captured");
+                                    if paid.as_str().parse::<u64>().expect("User id wasn't a number") == state.user().id.0 {
+                                        println!("{} paid {} to me~", payer.as_str(), amount.as_str());
                                     }
                                 }
                             },
                             229824641160577025 => {
                                 if let Some(cap) = BRIDGE_REGEX.captures(&message.content) {
-                                    author_name = cap.at(1).expect("No author captured").to_string();
-                                    content = cap.at(2).expect("No content captured").to_string();
+                                    author_name = cap.get(1).expect("No author captured").as_str().to_string();
+                                    content = cap.get(2).expect("No content captured").as_str().to_string();
                                     listen = true;
                                 }
                             },
@@ -123,6 +120,11 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             }
                         }
                     }
+                    let power = if message.author.id.to_string() == owner_id {
+                        Power::Cool
+                    } else {
+                        Power::Normal
+                    };
                     let mut nsfw = false;
                     if message.author.id != state.user().id {
                         connection.sync_calls(&[message.channel_id]);
@@ -154,8 +156,13 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 }
                                 connection.sync_servers(&[server.id]);
                                 channel_chains.entry(channel.id).or_insert_with(|| {
-                                    let mut chain = MarkovChain::new(words.clone(),
-                                                                     &format!("lines/discord/{}/{}", server.id, channel.id));
+                                    let mut chain = MarkovChain::new(if nsfw {
+                                        println!("{} is using nsfw_words", server.id);
+                                        nsfw_words.clone()
+                                    } else {
+                                        words.clone()
+                                    },
+                                 &format!("lines/discord/{}/{}", server.id, channel.id));
                                     chain.parent = Some(server_chains.entry(server.id)
                                         .or_insert_with(|| {
                                             let mut chain = MarkovChain::new(words.clone(),
@@ -245,7 +252,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             if content.starts_with("$m") {
                                 let mut command = content.clone();
                                 command.drain(..3);
-                                main_chain.send(ChainMessage::Command(command, markov_sender.clone())).expect("Couldn't send Command to chain");
+                                main_chain.send(ChainMessage::Command(command, power, markov_sender.clone())).expect("Couldn't send Command to chain");
                                 let _ = discord.send_message(message.channel_id,
                                                              &markov_reciever.recv().unwrap(),
                                                              "",
@@ -253,7 +260,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             } else if content.starts_with("$cm") {
                                 let mut command = content.clone();
                                 command.drain(..4);
-                                chain.send(ChainMessage::Command(command, markov_sender.clone())).unwrap();
+                                chain.send(ChainMessage::Command(command, power, markov_sender.clone())).unwrap();
                                 let _ = discord.send_message(message.channel_id,
                                                              &markov_reciever.recv().unwrap(),
                                                              "",
@@ -271,7 +278,8 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                                    users.clone(),
                                                                    markov_sender.clone()))
                                         .expect("Couldn't send Reply to chain");
-                                    let response = MENTION_REGEX.replace_all(&markov_reciever.recv().unwrap(), &format!("<@!{}>", owner_id)[..]);
+                                    let response = markov_reciever.recv().unwrap();
+                                    let response = MENTION_REGEX.replace_all(&response, &format!("<@!{}>", owner_id)[..]);
                                     println!("Saying {}", response);
                                     let _ = discord.send_message(message.channel_id,
                                                                  &response,

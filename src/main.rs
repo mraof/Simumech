@@ -6,11 +6,20 @@ extern crate discord as discord_lib;
 extern crate retry;
 extern crate hyper;
 extern crate egg_mode;
+extern crate tumblr as tumblr_lib;
+
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_json;
+
+extern crate base64;
 
 use std::collections::{BTreeSet, HashMap};
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, File};
+use std::path::Path;
 use std::hash::{Hash, Hasher, BuildHasher};
 use std::collections::hash_map::RandomState;
 use std::sync::{RwLock, Arc};
@@ -23,15 +32,15 @@ use rand::SeedableRng;
 
 mod discord;
 mod twitter;
+mod tumblr;
 
 const NONE: u32 = 0;
 const END: u32 = 1;
-const NAME: &'static str = "sbnkalny";
-const OWNER: &'static str = "Mraof";
 
 lazy_static! {
     static ref URL_REGEX: regex::Regex = regex::Regex::new(r"^http:|https:").expect("Failed to make URL_REGEX");
     static ref SENTENCE_END: regex::Regex = regex::Regex::new("\\. |\n").expect("Failed to make SENTENCE_END");
+    static ref CONFIG: GlobalConfig = GlobalConfig::load("config/config.json");
 }
 
 fn main() {
@@ -44,8 +53,16 @@ fn main() {
              load_time.subsec_nanos());
     let (sender, thread) = markov_chain.thread();
     let mut chats = HashMap::new();
-    chats.insert("discord", discord::start(sender.clone(), words.clone()));
-    chats.insert("twitter", twitter::start(sender.clone(), words.clone()));
+    if CONFIG.chats.contains("discord") {
+        chats.insert("discord", discord::start(sender.clone(), words.clone()));
+    }
+    if CONFIG.chats.contains("twitter") {
+        chats.insert("twitter", twitter::start(sender.clone(), words.clone()));
+    }
+    if CONFIG.chats.contains("tumblr") {
+        chats.insert("tumblr", tumblr::start(sender.clone(), words.clone()));
+    }
+    println!("Chats loaded: {:?}", CONFIG.chats);
     let (commander, commands) = channel();
     let console_thread = {
             let commander = commander.clone();
@@ -72,8 +89,8 @@ fn main() {
                     sender.send(ChainMessage::Reply(values.map(|string| string.to_string())
                                                       .collect::<Vec<String>>()
                                                       .join(" "),
-                                                  NAME.into(),
-                                                  OWNER.into(),
+                                                  CONFIG.name.clone(),
+                                                  CONFIG.owner.clone(),
                                                   Vec::new(),
                                                   replier))
                         .expect("Failed to send reply message");
@@ -97,7 +114,12 @@ fn main() {
                     }
                     break;
                 }
-                _ => "".into(),
+                command => {
+                    if let Some(chat) = chats.get(command) {
+                        chat.send(values.collect::<Vec<_>>().join(" ")).expect("Can't send to chat");
+                    }
+                    "".into()
+                }
             })
             .expect("Failed to reply");
     }
@@ -150,6 +172,13 @@ pub struct WordMap {
     ids: HashMap<String, u32>,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+pub struct MarkovChainConfig {
+    pub tell_parent: bool,
+    pub consume: f32,
+    pub strength: f32,
+}
+
 pub struct MarkovChain {
     pub next: HashMap<[u32; 3], Vec<u32>>,
     pub prev: HashMap<[u32; 3], Vec<u32>>,
@@ -192,7 +221,7 @@ impl MarkovChain {
             consume: 0.0,
             strength: 1.0,
         };
-        let path = std::path::Path::new(filename);
+        let path = Path::new(filename);
         std::fs::create_dir_all(&path.parent().expect("Failed to get parent")).expect("Failed to create directory");
         let file = OpenOptions::new().append(true).read(true).create(true).open(&path).expect(&format!("Failed to open {:?}", &path));
         let reader = BufReader::new(file);
@@ -209,6 +238,9 @@ impl MarkovChain {
             }*/
         }
         markov_chain
+    }
+
+    pub fn load_config(&mut self) {
     }
 
     pub fn thread(mut self) -> (Sender<ChainMessage>, std::thread::JoinHandle<()>) {
@@ -661,7 +693,7 @@ impl MarkovChain {
                         })
             }
             Some("sentence") => {
-                self.random_sentence(&[NAME.to_string(), OWNER.to_string()],
+                self.random_sentence(&[CONFIG.name.clone(), CONFIG.owner.clone()],
                                      parts.get(1).unwrap_or(&"".to_string()))
             }
             Some("parent") => {
@@ -759,4 +791,42 @@ impl WordMap {
 pub enum Power {
     Normal,
     Cool
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(default)]
+struct GlobalConfig {
+    owner: String,
+    name: String,
+    chats: BTreeSet<String>,
+}
+
+impl GlobalConfig {
+    pub fn load(filename: &str) -> GlobalConfig {
+        let config = if let Ok(file) = File::open(filename) {
+            serde_json::from_reader(file).expect("Failed to parse global config file")
+        } else {
+            GlobalConfig::default()
+        };
+        config.save(filename);
+        config
+    }
+
+    pub fn save(&self, filename: &str) {
+        serde_json::to_writer_pretty(&mut File::create(filename).expect("Could not create global config file"), &self).expect("Failed to write discord config file");
+    }
+}
+
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        let mut chats = BTreeSet::new();
+        chats.insert("tumblr".to_string());
+        chats.insert("twitter".to_string());
+        chats.insert("discord".to_string());
+        GlobalConfig {
+            owner: "Mraof™".to_string(),
+            name: "Simumech".to_string(),
+            chats: chats,
+        }
+    }
 }

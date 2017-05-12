@@ -13,3 +13,8 @@ retry = "*"
 mime = "0.2" #Otherwise mime_guess will use 0.1
 hyper = "*"
 egg-mode = "*"
+serde = "*"
+serde_json = "*"
+serde_derive = "*"
+tumblr = {path = "../tumblr-rs"}
+base64 = "*"

@@ -1,0 +1,226 @@
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::{RwLock, Arc};
+use super::{WordMap, ChainMessage, MarkovChain, Power};
+use std::fs::File;
+use std::thread::Builder;
+use std::thread::sleep;
+use std::time::{Duration, UNIX_EPOCH};
+use serde_json;
+use tumblr_lib::{Tumblr, Response, ParamList, PostType};
+use rand;
+use rand::Rng;
+
+pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
+    let (sender, reciever): (_, Receiver<String>) = channel();
+    let config_file = "config/tumblr.json";
+    let mut config = TumblrConfig::load(config_file);
+    let cli_sender = sender.clone();
+    Builder::new()
+        .name("tumblr".to_string())
+        .spawn(move || {
+            if config.blog.is_empty() {
+                panic!("Blog can't be empty");
+            }
+            if config.askers.is_empty() {
+                config.askers.push(config.blog.clone());
+                config.askers.push(config.blog.clone());
+                config.askers.push(config.blog.clone());
+                config.askers.push(config.blog.clone());
+                config.save(config_file);
+            }
+            let mut chain = MarkovChain::new(words, "lines/tumblr");
+            chain.parent = Some(main_chain);
+            //chain.strength = 0.6;
+            let chain = chain.thread().0;
+            let (markov_sender, markov_reciever) = channel();
+            let mut tumblr = Tumblr::new(&config.consumer_key, &config.consumer_secret);
+            tumblr.set_token(&config.access_key, &config.access_secret);
+            let answer_sender = sender.clone();
+            Builder::new()
+                .name("tumblr_answers".to_string())
+                .spawn(move || {
+                    loop {
+                        answer_sender.send("answer".to_string()).expect("Failed to send answer command to tumblr reciever");
+                        sleep(Duration::from_secs(600));
+                    }
+                }).expect("Unable to create tumblr answers thread");
+            let post_sender = sender.clone();
+            Builder::new()
+                .name("tumblr_poster".to_string())
+                .spawn(move || {
+                    loop {
+                        let seconds = UNIX_EPOCH.elapsed().unwrap().as_secs();
+                        sleep(Duration::from_secs((seconds * seconds) % 12000));
+                        post_sender.send("post".to_string()).expect("Failed to send answer command to tumblr reciever");
+                    }
+                }).expect("Unable to create tumblr poster thread");
+            loop {
+                if let Ok(command) = reciever.try_recv() {
+                    match command.as_ref() {
+                        "stop" => {
+                            break
+                        }
+                        "answer" => {
+                            println!("Checking tumblr {} for asks", config.blog);
+                            let mut params = ParamList::new();
+                            params.insert("type".into(), "answer".into());
+                            match tumblr.get::<Response>(&format!("/blog/{}/posts/submission", config.blog), Some(&params)) {
+                                Ok(posts) => {
+                                    let posts = posts.posts.expect("Invalid response for submissions");
+                                    println!("Found {} asks", posts.len());
+                                    for post in posts {
+                                        let post = post.into_post();
+                                        if let PostType::Answer { answer, asking_name, asking_url, question} = post.post_type {
+                                            if !answer.is_empty() {
+                                                println!("Tumblr ask already had an answer, {}", answer);
+                                            }
+                                            let mut tags = "ANSWER,".to_string();
+                                            if asking_url.is_some() {
+                                                tags += &asking_name;
+                                                tags += ",";
+                                                config.askers.push(asking_name.clone());
+                                                config.save(config_file);
+                                            }
+
+                                            chain.send(ChainMessage::Reply(question.clone(), config.blog.clone(), asking_name.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
+                                            let answer = markov_reciever.recv().expect("Failed to get reply");
+
+                                            chain.send(ChainMessage::Reply(question.clone(), config.blog.clone(), asking_name.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
+                                            tags += &markov_reciever.recv().expect("Failed to get reply");
+                                            chain.send(ChainMessage::Learn(question.clone(), config.askers.clone())).expect("Couldn't learn ask");
+
+                                            let mut params = ParamList::new();
+                                            params.insert("id".into(), post.id.to_string().into());
+                                            params.insert("state".into(), "queue".into());
+                                            params.insert("answer".into(), answer.into());
+                                            params.insert("tags".into(), tags.into());
+                                            let _ = tumblr.post(&format!("/blog/{}/post/edit", config.blog), Some(&params)).map_err(|err| println!("{:?}", err));
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    println!("{:#?}", error);
+                                }
+                            }
+                        }
+                        "post" => {
+                            let mut params = ParamList::new();
+                            let mut tags = String::new();
+                            let post_type = rand::thread_rng().next_u32() % 3;
+                            println!("Making {} post", post_type);
+                            match post_type {
+                                0 => {
+                                    //Text
+                                    params.insert("type".into(), "text".into());
+                                    params.insert("native_inline_images".into(), "true".into());
+                                    tags += "TEXT,";
+                                    let body;
+                                    if rand::thread_rng().next_u32() % 20 == 0 {
+                                        chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                        let mut title = markov_reciever.recv().expect("Failed to get reply");
+                                        for i in 1..11 {
+                                            if title.len() <= i * 10 {
+                                                break;
+                                            }
+                                            chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                            title = markov_reciever.recv().expect("Failed to get reply");
+                                        }
+                                        params.insert("title".into(), title.clone().into());
+                                        chain.send(ChainMessage::Reply(title.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
+                                        body = markov_reciever.recv().expect("Failed to get reply");
+                                    } else {
+                                        chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                        body = markov_reciever.recv().expect("Failed to get reply");
+                                    }
+                                    params.insert("body".into(), body.clone().into());
+                                    chain.send(ChainMessage::Reply(body.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
+                                    tags += &markov_reciever.recv().expect("Failed to get reply");
+                                }
+                                1 => {
+                                    //Chat
+                                    params.insert("type".into(), "chat".into());
+                                    tags += "CHAT,";
+                                    let count = rand::thread_rng().next_u32() % 4 + 1;
+                                    let mut participants = Vec::with_capacity(count as usize);
+                                    for _ in 0..count {
+                                        participants.push(rand::thread_rng().choose(&config.askers).unwrap().clone());
+                                    }
+                                    let mut conversation = String::new();
+                                    let mut last;
+                                    let mut last_person;
+                                    if rand::thread_rng().next_u32() % 20 == 0 {
+                                        last_person = config.blog.clone();
+                                        chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                        last = markov_reciever.recv().expect("Failed to get reply");
+                                        params.insert("title".into(), last.clone().into());
+                                    } else {
+                                        let current_person = rand::thread_rng().choose(&participants).unwrap().clone();
+                                        chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                        last = markov_reciever.recv().expect("Failed to get reply");
+                                        conversation += &format!("{}: {}\n", current_person, last);
+                                        last_person = current_person;
+                                    }
+                                    for _ in 0..(rand::thread_rng().next_u32() % 6 + 1) * count {
+                                        let current_person = rand::thread_rng().choose(&participants).unwrap().clone();
+                                        chain.send(ChainMessage::Reply(last.clone(), current_person.clone(), last_person, config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
+                                        last = markov_reciever.recv().expect("Failed to get reply");
+                                        conversation += &format!("{}: {}\n", current_person, last);
+                                        last_person = current_person;
+                                    }
+                                    params.insert("conversation".into(), conversation.into());
+                                    tags += &participants.join(",");
+                                }
+                                _ => {
+                                    //Quote
+                                    params.insert("type".into(), "quote".into());
+                                    tags += "QUOTE,";
+                                    chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                    let quote = markov_reciever.recv().expect("Failed to get reply");
+                                    params.insert("quote".into(), quote.clone().into());
+                                    chain.send(ChainMessage::Reply(quote.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
+                                    tags += &markov_reciever.recv().expect("Failed to get reply");
+                                }
+                            }
+                            params.insert("tags".into(), tags.into());
+                            println!("{:#?}", params);
+                            let _ = tumblr.post(&format!("/blog/{}/post", config.blog), Some(&params)).map_err(|err| println!("{:?}", err));
+                        }
+                        "reload" => {
+                            let new_config = TumblrConfig::load(config_file);
+                            config.blog = new_config.blog;
+                            config.askers = new_config.askers;
+                        }
+                        _ => ()
+                    }
+                }
+            }
+        }).unwrap();
+    cli_sender
+}
+
+#[derive(Default, Debug, Deserialize, Serialize)]
+#[serde(default)]
+struct TumblrConfig {
+    consumer_key: String,
+    consumer_secret: String,
+    access_key: String,
+    access_secret: String,
+    blog: String,
+    askers: Vec<String>,
+}
+
+impl TumblrConfig {
+    pub fn load(filename: &str) -> TumblrConfig {
+        let config = if let Ok(file) = File::open(filename) {
+            serde_json::from_reader(file).expect("Failed to parse tumblr config file")
+        } else {
+            TumblrConfig::default()
+        };
+        config.save(filename);
+        config
+    }
+
+    pub fn save(&self, filename: &str) {
+        serde_json::to_writer_pretty(&mut File::create(filename).expect("Could not create tumblr config file"), &self).expect("Failed to write discord config file");
+    }
+}

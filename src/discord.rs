@@ -7,13 +7,14 @@ use super::ChainMessage;
 use super::MarkovChain;
 use super::Power;
 use std::thread::Builder;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use retry::Retry;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::time::{Instant, Duration, UNIX_EPOCH};
 use hyper::Client;
 use super::regex::Regex;
+use super::serde_json;
 
 lazy_static! {
     static ref MENTION_REGEX: Regex = Regex::new(r"<@!?\d+>").expect("Failed to make MENTION_REGEX");
@@ -23,16 +24,15 @@ lazy_static! {
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
     let (sender, reciever): (_, Receiver<String>) = channel();
-    let mut config = BufReader::new(File::open("config/discord").unwrap()).lines();
+    let mut config = DiscordConfig::load("config/discord.json");
     Builder::new()
         .name("discord".to_string())
         .spawn(move || {
             let hyper_client = Arc::new(Client::new());
             //I have no idea how to get a user token normally
             #[allow(deprecated)]
-            let discord = Discord::new_cache("config/discord_tokens", &config.next().unwrap().unwrap(), Some(&config.next().unwrap().unwrap()))
+            let discord = Discord::new_cache("config/discord_tokens", &config.login.email, Some(&config.login.password))
                 .expect("Login failed");
-            let owner_id = config.next().expect("No owner id").unwrap();
             let (mut connection, ready) = Retry::new(&mut || discord.connect(), &mut |result| result.is_ok())
                 .wait_between(200, 60000)
                 .execute()
@@ -51,7 +51,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let mut name_map: HashMap<_, String> = HashMap::new();
             loop {
                 if let Ok(message) = reciever.try_recv() {
-                    if let "stop" = message.to_lowercase().as_ref() {
+                    if "stop" == message.to_lowercase() {
                         connection.shutdown().unwrap();
                         break;
                     }
@@ -120,7 +120,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             }
                         }
                     }
-                    let power = if message.author.id.to_string() == owner_id {
+                    listen = listen && !config.ignored.contains(&message.channel_id.0);
+
+                    let power = if message.author.id.to_string() == config.owner_id {
                         Power::Cool
                     } else {
                         Power::Normal
@@ -249,7 +251,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             chain = user_chain;
                         }
                         if listen {
-                            if content.starts_with("$m") {
+                            if content.starts_with("$m") && content.len() >= 3 {
                                 let mut command = content.clone();
                                 command.drain(..3);
                                 main_chain.send(ChainMessage::Command(command, power, markov_sender.clone())).expect("Couldn't send Command to chain");
@@ -257,7 +259,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                              &markov_reciever.recv().unwrap(),
                                                              "",
                                                              false);
-                            } else if content.starts_with("$cm") {
+                            } else if content.starts_with("$cm") && content.len() >= 4 {
                                 let mut command = content.clone();
                                 command.drain(..4);
                                 chain.send(ChainMessage::Command(command, power, markov_sender.clone())).unwrap();
@@ -265,6 +267,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                              &markov_reciever.recv().unwrap(),
                                                              "",
                                                              false);
+                            } else if content == "$ignore" && power == Power::Cool {
+                                config.ignored.insert(message.channel_id.0);
+                                config.save("config/discord.json");
                             } else {
                                 for user in message.mentions {
                                     replace_names.push(format!("{}", user.mention()));
@@ -279,7 +284,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                                    markov_sender.clone()))
                                         .expect("Couldn't send Reply to chain");
                                     let response = markov_reciever.recv().unwrap();
-                                    let response = MENTION_REGEX.replace_all(&response, &format!("<@!{}>", owner_id)[..]);
+                                    let response = MENTION_REGEX.replace_all(&response, &format!("<@!{}>", config.owner_id)[..]);
                                     println!("Saying {}", response);
                                     let _ = discord.send_message(message.channel_id,
                                                                  &response,
@@ -335,4 +340,35 @@ fn weird_contains(message: &str, string: &str) -> bool {
         }
     }
     false
+}
+
+#[derive(Default, Debug, Deserialize, Serialize)]
+#[serde(default)]
+struct DiscordConfig {
+    login: DiscordLogin,
+    owner_id: String,
+    ignored: HashSet<u64>
+}
+
+#[derive(Default, Debug, Deserialize, Serialize)]
+#[serde(default)]
+struct DiscordLogin {
+    email: String,
+    password: String
+}
+
+impl DiscordConfig {
+    pub fn load(filename: &str) -> DiscordConfig {
+        let config = if let Ok(file) = File::open(filename) {
+            serde_json::from_reader(file).expect("Failed to parse discord config file")
+        } else {
+            DiscordConfig::default()
+        };
+        config.save(filename);
+        config
+    }
+
+    pub fn save(&self, filename: &str) {
+        serde_json::to_writer_pretty(&mut File::create(filename).expect("Could not create discord config file"), &self).expect("Failed to write discord config file");
+    }
 }

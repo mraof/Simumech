@@ -142,7 +142,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                     for attachment in message.attachments.clone() {
                                         //Having dimensions means it's an image
                                         if attachment.dimensions.is_some() {
-                                            let filename = format!("images/discord/{}/{}.{}", server.id, attachment.id, attachment.filename.split(".").last().unwrap());
+                                            let filename = format!("images/discord/{}/{}.{}", server.id, attachment.id, attachment.filename.split('.').last().unwrap());
                                             let client = hyper_client.clone();
                                             Builder::new()
                                                 .name(filename.clone())
@@ -176,7 +176,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                     if nsfw {
                                         chain.tell_parent = false
                                     }
-                                    chain.strength = 0.7;
+                                    chain.set_strength(0.7);
                                     chain.thread().0
                                 });
                                 let mut users: Vec<String> = server.members.iter().map(|member| member.nick.clone().unwrap_or_else(|| member.user.name.clone()).clone()).collect();
@@ -244,7 +244,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             let user_chain = user_chains.entry(message.author.id).or_insert_with(|| {
                                 let mut chain = MarkovChain::new(words.clone(),
                                                                  &format!("lines/discord/users/{}", message.author.id));
-                                chain.strength = 0.3;
+                                chain.set_strength(0.3);
                                 chain.thread().0
                             });
                             user_chain.send(ChainMessage::ChangeParent(Some(chain.clone()))).expect("Couldn't change parent");

@@ -34,8 +34,10 @@ mod discord;
 mod twitter;
 mod tumblr;
 
-const NONE: u32 = 0;
-const END: u32 = 1;
+type Key = [u32;  3];
+
+const NONE: u32 = !0;
+const END: u32 = !1;
 
 lazy_static! {
     static ref URL_REGEX: regex::Regex = regex::Regex::new(r"^http:|https:").expect("Failed to make URL_REGEX");
@@ -43,6 +45,7 @@ lazy_static! {
     static ref CONFIG: GlobalConfig = GlobalConfig::load("config/config.json");
 }
 
+//TODO Save cache of lines as u32 and word map
 fn main() {
     let words = Arc::new(RwLock::new(WordMap::new()));
     let instant = std::time::Instant::now();
@@ -180,28 +183,24 @@ pub struct MarkovChainConfig {
 }
 
 pub struct MarkovChain {
-    pub next: HashMap<[u32; 3], Vec<u32>>,
-    pub prev: HashMap<[u32; 3], Vec<u32>>,
+    pub core: Arc<RwLock<ChainCore>>,
     pub words: Arc<RwLock<WordMap>>,
     pub lines: BTreeSet<u64>,
     pub build_hasher: RandomState,
-    pub random: Isaac64Rng,
     pub filename: String,
-    pub parent: Option<Sender<ChainMessage>>,
+    parent: Option<Sender<ChainMessage>>,
     pub tell_parent: bool,
-    pub consume: f32,
-    ///Lower it is, the higher the chance of using the parent
-    pub strength: f32,
 }
 
 pub enum ChainMessage {
     Learn(String, Vec<String>),
     Reply(String, String, String, Vec<String>, Sender<String>),
-    NextNum([u32; 3], u8, Sender<usize>),
-    Next([u32; 3], u8, Sender<Option<Vec<u32>>>),
+    NextNum(Key, u8, Sender<usize>),
+    Next(Key, u8, Sender<Option<Vec<u32>>>),
     Command(String, Power, Sender<String>),
     RandomWord(Sender<String>),
     ChangeParent(Option<Sender<ChainMessage>>),
+    Core(Sender<Arc<RwLock<ChainCore>>>),
     Stop,
 }
 
@@ -209,33 +208,33 @@ pub enum ChainMessage {
 impl MarkovChain {
     pub fn new(words: Arc<RwLock<WordMap>>, filename: &str) -> MarkovChain {
         let mut markov_chain = MarkovChain {
+            core: Default::default(),
             words: words.clone(),
-            random: Isaac64Rng::from_seed(&[rand::thread_rng().next_u64()]),
-            next: Default::default(),
-            prev: Default::default(),
             lines: Default::default(),
             build_hasher: Default::default(),
             filename: filename.to_string(),
             parent: None,
             tell_parent: true,
-            consume: 0.0,
-            strength: 1.0,
         };
-        let path = Path::new(filename);
-        std::fs::create_dir_all(&path.parent().expect("Failed to get parent")).expect("Failed to create directory");
-        let file = OpenOptions::new().append(true).read(true).create(true).open(&path).expect(&format!("Failed to open {:?}", &path));
-        let reader = BufReader::new(file);
-        let mut words = words.write().expect("Failed to get words for writing");
-        for line in reader.lines() {
-            let line = line.expect("Failed to unwrap line");
-            let mut hasher = markov_chain.build_hasher.build_hasher();
-            line.to_lowercase().hash(&mut hasher);
-            let hash = hasher.finish();
-            if markov_chain.lines.insert(hash) {
-                markov_chain.learn_line(&line, &mut words);
-            } /*else {
+        {
+            let path = Path::new(filename);
+            std::fs::create_dir_all(&path.parent().expect("Failed to get parent")).expect("Failed to create directory");
+            let file = OpenOptions::new().append(true).read(true).create(true).open(&path).expect(&format!("Failed to open {:?}", &path));
+            let reader = BufReader::new(file);
+            let mut words = words.write().expect("Failed to get words for writing");
+            let mut core = markov_chain.core.write().expect("Couldn't lock core for writing");
+            for line in reader.lines() {
+                let line = line.expect("Failed to unwrap line");
+                let mut hasher = markov_chain.build_hasher.build_hasher();
+                line.to_lowercase().hash(&mut hasher);
+                let hash = hasher.finish();
+                if markov_chain.lines.insert(hash) {
+                    let line_words: Vec<u32> = line.split(' ').map(|word| words.lookup(word.into())).collect();
+                    core.learn(line_words);
+                } /*else {
                 println!("Duplicate line in {}: {}", path.to_string_lossy(), line)
             }*/
+            }
         }
         markov_chain
     }
@@ -251,6 +250,7 @@ impl MarkovChain {
             .spawn(move || {
                 let file = OpenOptions::new().append(true).create(true).open(&self.filename).expect("Failed to open");
                 let mut writer = LineWriter::new(file);
+                let mut random = rand::thread_rng();
                 while let Ok(message) = receiver.recv() {
                     match message {
                         ChainMessage::Learn(line, names) => {
@@ -262,25 +262,30 @@ impl MarkovChain {
                             replier.send(self.reply(&line, &name, &sender, &names)).expect("Could not send reply");
                         }
                         ChainMessage::NextNum(key, dir, sender) => {
+                            let core = self.core.read().expect("Couldn't lock core for writing");
                             sender.send(if dir == 0 {
-                                    self.prev.get(&key).unwrap_or(&Vec::new()).len()
+                                    core.prev.get(&key).unwrap_or(&Vec::new()).len()
                                 } else {
-                                    self.next.get(&key).unwrap_or(&Vec::new()).len()
+                                    core.next.get(&key).unwrap_or(&Vec::new()).len()
                                 })
                                 .expect("Could not send next num");
                         }
                         ChainMessage::Next(key, dir, sender) => {
-                            sender.send(self.next(&key, dir)).expect("Could not send next word");
+                            let mut core = self.core.write().expect("Couldn't lock core for writing");
+                            sender.send(core.next(&key, dir)).expect("Could not send next word");
                         }
                         ChainMessage::Command(command, power, sender) => {
                             sender.send(self.command(&command, power)).expect("Could not send command response");
                         }
                         ChainMessage::RandomWord(sender) => {
                             let words = self.words.read().expect("Couldn't lock words for reading");
-                            sender.send(words.get(self.random.next_u32() % words.len() as u32)).expect("Could not send random word");
+                            sender.send(words.get(random.next_u32() % words.len() as u32)).expect("Could not send random word");
                         }
                         ChainMessage::ChangeParent(parent) => {
-                            self.parent = parent;
+                            self.set_parent(parent);
+                        }
+                        ChainMessage::Core(sender) => {
+                            sender.send(self.core.clone()).expect("Couldn't send core");
                         }
                         ChainMessage::Stop => break,
                     }
@@ -305,44 +310,13 @@ impl MarkovChain {
             if self.lines.insert(hash) {
                 let words = self.words.clone();
                 let mut words = words.write().expect("Failed to lock words for writing");
-                self.learn_line(&line, &mut words);
+                let line_words: Vec<u32> = line.split(' ').map(|word| words.lookup(word.into())).collect();
+                let mut core = self.core.write().expect("Couldn't lock core for writing");
+                core.learn(line_words);
                 result = true
             }
         }
         result
-    }
-
-    pub fn learn_line(&mut self, line: &str, words: &mut WordMap) {
-        let mut line_words: Vec<u32> = line.split(' ').map(|word| words.lookup(word.into())).collect();
-        line_words.insert(0, END);
-        line_words.insert(0, END);
-        line_words.push(END);
-        line_words.push(END);
-        let mut prev3;
-        let mut prev2;
-        let mut prev1;
-        let mut next3;
-        let mut next2;
-        let mut next1;
-        let end = line_words.len() - 2;
-        for (i, &word) in line_words.iter().enumerate().take(end).skip(2) {
-            if i > 2 {
-                next3 = [line_words[i - 3], line_words[i - 2], line_words[i - 1]];
-                next2 = [next3[1], next3[2], NONE];
-                next1 = [next3[2], NONE, NONE];
-                self.next.entry(next3).or_insert_with(Default::default).push(word);
-                self.next.entry(next2).or_insert_with(Default::default).push(word);
-                self.next.entry(next1).or_insert_with(Default::default).push(word);
-            }
-            if i < end {
-                prev3 = [line_words[i + 2], line_words[i + 1], word];
-                prev2 = [prev3[1], prev3[2], NONE];
-                prev1 = [prev3[2], NONE, NONE];
-                self.prev.entry(prev3).or_insert_with(Default::default).push(line_words[i - 1]);
-                self.prev.entry(prev2).or_insert_with(Default::default).push(line_words[i - 1]);
-                self.prev.entry(prev1).or_insert_with(Default::default).push(line_words[i - 1]);
-            }
-        }
     }
 
     pub fn reply(&mut self, input: &str, name: &str, sender: &str, names: &[String]) -> String {
@@ -371,7 +345,6 @@ impl MarkovChain {
                 .join(". ");
         }
 
-
         let input: Vec<u32> = {
             let mut words = self.words.write().expect("Failed to lock words for writing");
             lowercase_nonurl(&input).split(' ').map(|word| words.lookup(word.into())).collect()
@@ -393,118 +366,16 @@ impl MarkovChain {
             name.parse().unwrap_or(0)
         };
 
-        let mut best = [input[0], *input.get(1).unwrap_or(&NONE), *input.get(2).unwrap_or(&NONE)];
-        // Pointless if it's generating a random sentence from a key
-        if random_sentence || input.len() > 3 {
-            let mut temp_keys = vec![[END, NONE, NONE], [END, END, NONE], [END, END, END]];
-            let mut best_size = self.next.get(&best).unwrap_or(&Vec::new()).len();
-            for word in &input {
-                temp_keys[2] = [temp_keys[2][1], temp_keys[2][2], *word];
-                temp_keys[1] = [temp_keys[2][1], temp_keys[2][2], NONE];
-                temp_keys[0] = [temp_keys[2][2], NONE, NONE];
-                for key in &temp_keys {
-                    if key[0] != END && key[1] != END && key[2] != END {
-                        let temp_size = self.next.get(key).unwrap_or(&Vec::new()).len();
-                        if (temp_size > 0) && (best_size == 0 || (temp_size < best_size)) {
-                            best = *key;
-                            best_size = temp_size;
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut sentence = vec![best[0], best[1], best[2]];
-        sentence.retain(|&word| word > END);
-
-        for dir in 0..2 {
-            let mut words_temp: HashMap<[u32; 3], Vec<u32>> = HashMap::new();
-            let mut last_word = match if dir == 0 {
-                sentence.get(1)
+        let sentence = {
+            let mut core = self.core.write().expect("Couldn't lock core for writing");
+            // Pointless if it's generating a random sentence from a key
+            let best = if random_sentence || input.len() > 3 {
+                core.choose_best(&input)
             } else {
-                sentence.get((sentence.len() as isize - 2) as usize)
-            } {
-                Some(&word) => word,
-                None => END,
+                [input[0], *input.get(1).unwrap_or(&NONE), *input.get(2).unwrap_or(&NONE)]
             };
-            let mut last_word2 = match if dir == 0 {
-                sentence.get(2)
-            } else {
-                sentence.get((sentence.len() as isize - 3) as usize)
-            } {
-                Some(&word) => word,
-                None => END,
-            };
-
-            let mut size = sentence.len() - 1;
-            while size < sentence.len() {
-                size = sentence.len();
-                let current_word = if dir == 0 {
-                    sentence[0]
-                } else {
-                    sentence[sentence.len() - 1]
-                };
-                let keys = vec![[current_word, NONE, NONE], [last_word, current_word, NONE], [last_word2, last_word, current_word]];
-                let mut word = END;
-                for key in &keys {
-                    if !words_temp.contains_key(key) {
-                        if let Some(list) = self.next(key, dir) {
-                            words_temp.insert(*key, list);
-                        }
-                    }
-                }
-                let key_index = {
-                    match words_temp.get(&keys[1]).unwrap_or(&Vec::new()).len() {
-                        0 => {
-                            if (ideal as f32) / (sentence.len() as f32) < self.random.next_f32() {
-                                break;
-                            }
-                            0
-                        }
-                        two_length => {
-                            if !words_temp.get(&keys[2]).unwrap_or(&Vec::new()).is_empty() && self.random.next_f32() > 4.0 / (two_length as f32) {
-                                2
-                            } else {
-                                1
-                            }
-                        }
-                    }
-
-                };
-                if let Some(mut list) = words_temp.get_mut(&keys[key_index]) {
-                    if !list.is_empty() {
-                        let mut index = self.random.next_u32() as usize % list.len();
-                        if ideal > 0 {
-                            // Want a long sentence, but it's too much too long
-                            if strict_limit && sentence.len() >= ideal / (2 - dir as usize) {
-                                continue;
-                            } else {
-                                for _ in ideal..sentence.len() {
-                                    index = self.random.next_u32() as usize % list.len();
-                                    if let Some(word) = list.get(index) {
-                                        if word == &END {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        word = list.remove(index);
-                    } else {
-                        word = END
-                    }
-                }
-                if word != END {
-                    if dir == 0 {
-                        sentence.insert(0, word);
-                    } else {
-                        sentence.push(word);
-                    }
-                }
-                last_word2 = last_word;
-                last_word = current_word;
-            }
-        }
+            core.generate(best, ideal, strict_limit)
+        };
 
 
         let mut name_replacements: HashMap<String, String> = HashMap::new();
@@ -513,7 +384,7 @@ impl MarkovChain {
         }
 
         let words = self.words.read().expect("Failed to lock words for reading");
-        let mut random = self.random;
+        let mut random = rand::thread_rng();
         let mut sentence = sentence.iter()
             .map(|&word| {
                 NAME_TOKEN.replace_all(&words.get(word), |caps: &regex::Captures| {
@@ -533,61 +404,14 @@ impl MarkovChain {
         reply + &sentence
     }
 
-    pub fn next(&mut self, key: &[u32; 3], dir: u8) -> Option<Vec<u32>> {
-        let option = if self.consume > self.random.next_f32() {
-            if dir == 0 {
-                self.prev.remove(key)
-            } else {
-                self.next.remove(key)
-            }
-        } else {
-            match if dir == 0 {
-                self.prev.get(key)
-            } else {
-                self.next.get(key)
-            } {
-                Some(list) => Some(list.clone()),
-                None => None,
-            }
-        };
-        match option {
-            Some(list) => {
-                match self.parent {
-                    Some(ref parent) => {
-                        let (sender, receiver) = channel();
-                        parent.send(ChainMessage::NextNum(*key, dir, sender)).expect("Couldn't send NextNum message to parent");
-                        let num = receiver.recv().expect("Couldn't recieve NextNum from parent");
-                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % ((list.len() * list.len()) as f32 * self.strength + (1.0 - self.strength)) as u32 {
-                            let (sender, receiver) = channel();
-                            parent.send(ChainMessage::Next(*key, dir, sender)).expect("Couldn't send Next to parent");
-                            receiver.recv().expect("Couldn't recieve Next from parent")
-                        } else {
-                            Some(list)
-                        }
-                    }
-                    None => Some(list),
-                }
-            }
-            None => {
-                match self.parent {
-                    Some(ref parent) => {
-                        let (sender, receiver) = channel();
-                        parent.send(ChainMessage::Next(*key, dir, sender)).expect("Couldn't recieve Next from parent");
-                        receiver.recv().expect("Couldn't recieve Next from parent")
-                    }
-                    None => None,
-                }
-            }
-        }
-    }
-
     pub fn random_sentence(&mut self, names: &[String], ideal: &str) -> String {
         let start = {
-            let offset = self.random.next_u32() as usize % self.next.len();
+            let core = self.core.read().expect("Couldn't lock core for writing");
+            let offset = rand::thread_rng().next_u32() as usize % core.next.len();
             let empty_key = [END, END, END];
-            let key = self.next.keys().nth(offset).unwrap_or(&empty_key);
+            let key = core.next.keys().nth(offset).unwrap_or(&empty_key);
             let mut sentence = vec![key[0], key[1], key[2]];
-            sentence.retain(|&word| word > END);
+            sentence.retain(|&word| word < END);
             let words = self.words.read().expect("Failed to get words for reading");
             sentence.iter().map(|&word| words.get(word)).collect::<Vec<String>>().join(" ")
         };
@@ -599,9 +423,10 @@ impl MarkovChain {
         match parts.get(0).map(String::as_ref) {
             Some("stats") => {
                 let words = self.words.read().expect("Failed to get words for reading");
+                let core = self.core.read().expect("Couldn't lock core for writing");
                 format!("Forwards keys: {}, Backwards keys: {}, words: {}, lines: {}",
-                        self.next.len(),
-                        self.prev.len(),
+                        core.next.len(),
+                        core.prev.len(),
                         words.len(),
                         self.lines.len())
             }
@@ -651,12 +476,13 @@ impl MarkovChain {
                                      count: 0,
                                      best_count: 0,
                                  }];
-                let maps = [&self.prev, &self.next];
+                let core = self.core.read().expect("Couldn't lock core for reading");
+                let maps = [&core.prev, &core.next];
                 for dir in 0..2 {
                     if let Some(list) = maps[dir].get(&keys[dir]) {
                         let mut counts = HashMap::new();
                         let mut list = list.clone();
-                        list.retain(|&word| word > END);
+                        list.retain(|&word| word < END);
                         for word in list {
                             *counts.entry(word).or_insert(0) += 1
                         }
@@ -671,7 +497,7 @@ impl MarkovChain {
                 }
                 let words = self.words.read().expect("Failed to get words for reading");
                 let mut key = keys[1].to_vec();
-                key.retain(|&word| word > END);
+                key.retain(|&word| word < END);
                 let key = key.iter().map(|&word| words.get(word)).collect::<Vec<String>>().join(" ");
                 format!("{} has {}, {}",
                         key,
@@ -711,10 +537,11 @@ impl MarkovChain {
             }
             Some("strength") => {
                 if parts.len() == 1 {
-                    self.strength.to_string()
+                    let core = self.core.read().expect("Couldn't lock core for writing");
+                    core.strength.to_string()
                 } else if power == Power::Cool {
                     if let Ok(strength) = parts[1].parse() {
-                        self.strength = strength;
+                        self.set_strength(strength);
                         "".into()
                     } else {
                         self.reply(&parts.join(" "), "", "", &parts)
@@ -727,13 +554,11 @@ impl MarkovChain {
                 if power == Power::Cool {
                     if parts.len() == 1 {
                         (!self.tell_parent).to_string()
+                    } else if let Ok(tell_parent) = parts[1].parse::<bool>() {
+                        self.tell_parent = !tell_parent;
+                        "".to_string()
                     } else {
-                        if let Ok(tell_parent) = parts[1].parse::<bool>() {
-                            self.tell_parent = !tell_parent;
-                            "".to_string()
-                        } else {
-                            self.reply(&parts.join(" "), "", "", &parts)
-                        }
+                        self.reply(&parts.join(" "), "", "", &parts)
                     }
                 } else {
                     self.reply("Not cool enough", "", "", &parts)
@@ -748,14 +573,27 @@ impl MarkovChain {
             _ => "".into(),
         }
     }
+
+    pub fn set_parent(&mut self, parent: Option<Sender<ChainMessage>>) {
+        self.parent = parent;
+        self.core.write().expect("Couldn't lock core for writing").parent = match self.parent {
+            Some(ref parent) => {
+                let (sender, reciever) = channel();
+                parent.send(ChainMessage::Core(sender.clone())).unwrap();
+                Some(reciever.recv().unwrap())
+            }
+            None => None
+        };
+    }
+    pub fn set_strength(&mut self, strength: f32) {
+        let mut core = self.core.write().expect("Couldn't lock core for writing");
+        core.strength = strength;
+    }
 }
 
 impl WordMap {
     pub fn new() -> WordMap {
-        let mut word_map: WordMap = Default::default();
-        word_map.lookup("\0".into());
-        word_map.lookup("".into());
-        word_map
+        Default::default()
     }
 
     pub fn lookup(&mut self, word: String) -> u32 {
@@ -828,5 +666,258 @@ impl Default for GlobalConfig {
             name: "Simumech".to_string(),
             chats: chats,
         }
+    }
+}
+
+pub struct ChainCore {
+    pub next: HashMap<Key, Vec<u32>>,
+    pub prev: HashMap<Key, Vec<u32>>,
+    pub random: Isaac64Rng,
+    pub parent: Option<Arc<RwLock<ChainCore>>>,
+    pub consume: f32,
+    ///Lower it is, the higher the chance of using the parent
+    pub strength: f32,
+}
+
+impl ChainCore {
+    pub fn new() -> ChainCore {
+        ChainCore {
+            random: Isaac64Rng::from_seed(&[rand::thread_rng().next_u64()]),
+            next: Default::default(),
+            prev: Default::default(),
+            consume: 0.0,
+            strength: 1.0,
+            parent: None,
+        }
+    }
+    pub fn learn(&mut self, mut keys: Vec<u32>) {
+        keys.insert(0, END);
+        keys.insert(0, END);
+        keys.push(END);
+        keys.push(END);
+        let mut prev3;
+        let mut prev2;
+        let mut prev1;
+        let mut next3;
+        let mut next2;
+        let mut next1;
+        let end = keys.len() - 2;
+        for (i, &word) in keys.iter().enumerate().take(end).skip(2) {
+            if i > 2 {
+                next3 = [keys[i - 3], keys[i - 2], keys[i - 1]];
+                next2 = [next3[1], next3[2], NONE];
+                next1 = [next3[2], NONE, NONE];
+                self.next.entry(next3).or_insert_with(Default::default).push(word);
+                self.next.entry(next2).or_insert_with(Default::default).push(word);
+                self.next.entry(next1).or_insert_with(Default::default).push(word);
+            }
+            if i < end {
+                prev3 = [keys[i + 2], keys[i + 1], word];
+                prev2 = [prev3[1], prev3[2], NONE];
+                prev1 = [prev3[2], NONE, NONE];
+                self.prev.entry(prev3).or_insert_with(Default::default).push(keys[i - 1]);
+                self.prev.entry(prev2).or_insert_with(Default::default).push(keys[i - 1]);
+                self.prev.entry(prev1).or_insert_with(Default::default).push(keys[i - 1]);
+            }
+        }
+    }
+
+    fn generate(&mut self, best: Key, ideal: usize, strict_limit: bool) -> Vec<u32> {
+        let mut sentence = vec![best[0], best[1], best[2]];
+        sentence.retain(|&word| word < END);
+        for dir in 0..2 {
+            let mut words_temp: HashMap<Key, Vec<u32>> = HashMap::new();
+            let mut last_word = match if dir == 0 {
+                sentence.get(1)
+            } else {
+                sentence.get((sentence.len() as isize - 2) as usize)
+            } {
+                Some(&word) => word,
+                None => END,
+            };
+            let mut last_word2 = match if dir == 0 {
+                sentence.get(2)
+            } else {
+                sentence.get((sentence.len() as isize - 3) as usize)
+            } {
+                Some(&word) => word,
+                None => END,
+            };
+
+            let mut size = sentence.len() - 1;
+            while size < sentence.len() {
+                size = sentence.len();
+                let current_word = if dir == 0 {
+                    sentence[0]
+                } else {
+                    sentence[sentence.len() - 1]
+                };
+                let keys = vec![[current_word, NONE, NONE], [last_word, current_word, NONE], [last_word2, last_word, current_word]];
+                let mut word = END;
+                for key in &keys {
+                    if !words_temp.contains_key(key) {
+                        if let Some(list) = self.next(key, dir) {
+                            words_temp.insert(*key, list);
+                        }
+                    }
+                }
+                let key_index = {
+                    match words_temp.get(&keys[1]).unwrap_or(&Vec::new()).len() {
+                        0 => {
+                            if (ideal as f32) / (sentence.len() as f32) < self.random.next_f32() {
+                                break;
+                            }
+                            0
+                        }
+                        two_length => {
+                            if !words_temp.get(&keys[2]).unwrap_or(&Vec::new()).is_empty() && self.random.next_f32() > 4.0 / (two_length as f32) {
+                                2
+                            } else {
+                                1
+                            }
+                        }
+                    }
+                };
+                if let Some(mut list) = words_temp.get_mut(&keys[key_index]) {
+                    if !list.is_empty() {
+                        let mut index = self.random.next_u32() as usize % list.len();
+                        if ideal > 0 {
+                            // Want a long sentence, but it's too much too long
+                            if strict_limit && sentence.len() >= ideal / (2 - dir as usize) {
+                                continue;
+                            } else {
+                                for _ in ideal..sentence.len() {
+                                    index = self.random.next_u32() as usize % list.len();
+                                    if let Some(word) = list.get(index) {
+                                        if word == &END {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        word = list.remove(index);
+                    } else {
+                        word = END
+                    }
+                }
+                if word != END {
+                    if dir == 0 {
+                        sentence.insert(0, word);
+                    } else {
+                        sentence.push(word);
+                    }
+                }
+                last_word2 = last_word;
+                last_word = current_word;
+            }
+        }
+        sentence
+    }
+
+    fn choose_best(&self, input: &[u32]) -> Key {
+        let mut best = [input[0], *input.get(1).unwrap_or(&NONE), *input.get(2).unwrap_or(&NONE)];
+        let mut temp_keys = vec![[END, NONE, NONE], [END, END, NONE], [END, END, END]];
+        let mut best_size = self.next.get(&best).unwrap_or(&Vec::new()).len();
+        for word in input {
+            temp_keys[2] = [temp_keys[2][1], temp_keys[2][2], *word];
+            temp_keys[1] = [temp_keys[2][1], temp_keys[2][2], NONE];
+            temp_keys[0] = [temp_keys[2][2], NONE, NONE];
+            for key in &temp_keys {
+                if key[0] != END && key[1] != END && key[2] != END {
+                    let temp_size = self.next.get(key).unwrap_or(&Vec::new()).len();
+                    if (temp_size > 0) && (best_size == 0 || (temp_size < best_size)) {
+                        best = *key;
+                        best_size = temp_size;
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    pub fn next(&mut self, key: &Key, dir: u8) -> Option<Vec<u32>> {
+        let option = if self.consume > self.random.next_f32() {
+            if dir == 0 {
+                self.prev.remove(key)
+            } else {
+                self.next.remove(key)
+            }
+        } else {
+            match if dir == 0 {
+                self.prev.get(key)
+            } else {
+                self.next.get(key)
+            } {
+                Some(list) => Some(list.clone()),
+                None => None,
+            }
+        };
+        match option {
+            Some(list) => {
+                match self.parent {
+                    Some(ref parent) => {
+                        let mut parent = parent.write().expect("Failed to get parent for writing");
+                        let num = if dir == 0 {
+                            parent.prev.get(key).unwrap_or(&Vec::new()).len()
+                        } else {
+                            parent.next.get(key).unwrap_or(&Vec::new()).len()
+                        };
+                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % ((list.len() * list.len()) as f32 * self.strength + (1.0 - self.strength)) as u32 {
+                            parent.next(key, dir)
+                        } else {
+                            Some(list)
+                        }
+                    }
+                    None => Some(list),
+                }
+            }
+            None => {
+                match self.parent {
+                    Some(ref parent) => {
+                        let mut parent = parent.write().expect("Failed to get parent for writing");
+                        parent.next(key, dir)
+                    }
+                    None => None,
+                }
+            }
+        }
+    }
+}
+
+impl Default for ChainCore {
+    fn default() -> Self {
+        ChainCore::new()
+    }
+}
+
+#[test]
+fn test_commands() {
+    let words = Arc::new(RwLock::new(WordMap::new()));
+    let tumblr_chain = MarkovChain::new(words.clone(), "lines/tumblr");
+    let sender = tumblr_chain.thread().0;
+    let mut markov_chain = MarkovChain::new(words.clone(), "lines/twitter");
+    markov_chain.set_parent(Some(sender));
+    for _ in 0..100 {
+        println!("{}", markov_chain.random_sentence(&vec!["Mraof".into(), "Grimble".into()], ""));
+    }
+}
+
+#[test]
+fn test_word_chain() {
+    let mut chain = ChainCore::new();
+    chain.consume = 0.1;
+    let words: Vec<&str> = vec!["meow", "grow", "tree", "trombone", "Grombo", "grombu", "mrow", "meeooww"];
+    for word in words {
+        let keys: Vec<u32> = word.chars().map(|c| c as u32).collect();
+        chain.learn(keys);
+    }
+    let mut random = rand::thread_rng();
+    for _ in 0..100 {
+        let offset = random.next_u32() as usize % chain.next.len();
+        let empty_key = [END, END, END];
+        let key = *chain.next.keys().nth(offset).unwrap_or(&empty_key);
+        let word: String = chain.generate(key, 0, false).into_iter().map(|c| unsafe {std::char::from_u32_unchecked(c)}).collect();
+        println!("{}", word);
     }
 }

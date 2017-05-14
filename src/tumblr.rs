@@ -1,6 +1,6 @@
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::{RwLock, Arc};
-use super::{WordMap, ChainMessage, MarkovChain, Power};
+use super::{WordMap, ChainMessage, MarkovChain, Power, ChainCore, END};
 use std::fs::File;
 use std::thread::Builder;
 use std::thread::sleep;
@@ -9,6 +9,7 @@ use serde_json;
 use tumblr_lib::{Tumblr, Response, ParamList, PostType};
 use rand;
 use rand::Rng;
+use std::char;
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
     let (sender, reciever): (_, Receiver<String>) = channel();
@@ -27,6 +28,11 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                 config.askers.push(config.blog.clone());
                 config.askers.push(config.blog.clone());
                 config.save(config_file);
+            }
+            let mut name_chain = ChainCore::new();
+            for word in &config.askers {
+                let keys: Vec<u32> = word.chars().map(|c| c as u32).collect();
+                name_chain.learn(keys);
             }
             let mut chain = MarkovChain::new(words, "lines/tumblr");
             chain.parent = Some(main_chain);
@@ -50,7 +56,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                 .spawn(move || {
                     loop {
                         let seconds = UNIX_EPOCH.elapsed().unwrap().as_secs();
-                        sleep(Duration::from_secs((seconds * seconds) % 12000));
+                        sleep(Duration::from_secs((seconds * seconds) % 18000));
                         post_sender.send("post".to_string()).expect("Failed to send answer command to tumblr reciever");
                     }
                 }).expect("Unable to create tumblr poster thread");
@@ -80,6 +86,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                                 tags += ",";
                                                 config.askers.push(asking_name.clone());
                                                 config.save(config_file);
+
+                                                let keys: Vec<u32> = asking_name.chars().map(|c| c as u32).collect();
+                                                name_chain.learn(keys);
                                             }
 
                                             chain.send(ChainMessage::Reply(question.clone(), config.blog.clone(), asking_name.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
@@ -114,8 +123,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                     params.insert("type".into(), "text".into());
                                     params.insert("native_inline_images".into(), "true".into());
                                     tags += "TEXT,";
-                                    let body;
-                                    if rand::thread_rng().next_u32() % 20 == 0 {
+                                    let body = if rand::thread_rng().next_u32() % 20 == 0 {
                                         chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                         let mut title = markov_reciever.recv().expect("Failed to get reply");
                                         for i in 1..11 {
@@ -127,11 +135,11 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                         }
                                         params.insert("title".into(), title.clone().into());
                                         chain.send(ChainMessage::Reply(title.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
-                                        body = markov_reciever.recv().expect("Failed to get reply");
+                                        markov_reciever.recv().expect("Failed to get reply")
                                     } else {
                                         chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
-                                        body = markov_reciever.recv().expect("Failed to get reply");
-                                    }
+                                        markov_reciever.recv().expect("Failed to get reply")
+                                    };
                                     params.insert("body".into(), body.clone().into());
                                     chain.send(ChainMessage::Reply(body.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
                                     tags += &markov_reciever.recv().expect("Failed to get reply");
@@ -177,6 +185,14 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                     chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                     let quote = markov_reciever.recv().expect("Failed to get reply");
                                     params.insert("quote".into(), quote.clone().into());
+                                    if rand::thread_rng().next_u32() % 2 == 0 {
+                                        //TODO Try using the function to find the best key on a random asker name
+                                        let offset = rand::thread_rng().next_u32() as usize % name_chain.next.len();
+                                        let empty_key = [END, END, END];
+                                        let key = *name_chain.next.keys().nth(offset).unwrap_or(&empty_key);
+                                        let name: String = name_chain.generate(key, 5, false).into_iter().map(|c| unsafe {char::from_u32_unchecked(c)}).collect();
+                                        params.insert("source".into(), name.into());
+                                    }
                                     chain.send(ChainMessage::Reply(quote.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
                                     tags += &markov_reciever.recv().expect("Failed to get reply");
                                 }

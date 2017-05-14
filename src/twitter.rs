@@ -17,7 +17,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
         .spawn(move || {
             let mut chain = MarkovChain::new(words, "lines/twitter");
             chain.parent = Some(main_chain);
-            chain.strength = 0.6;
+            chain.set_strength(0.6);
             let chain = chain.thread().0;
             let (markov_sender, markov_reciever) = channel();
 

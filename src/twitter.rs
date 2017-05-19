@@ -35,29 +35,27 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let consumer_token = egg_mode::KeyPair::new(config.consumer_key, config.consumer_secret);
             let access_token = egg_mode::KeyPair::new(config.access_key, config.access_secret);
             let token = egg_mode::Token::Access { consumer: consumer_token, access: access_token };
-            loop {
-                if let Ok(command) = reciever.try_recv() {
-                    match command.as_ref() {
-                        "stop" => {
-                            break
-                        }
-                        "tweet" => {
-                            chain.send(ChainMessage::Command("sentence 15".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
-                            let mut tweet = markov_reciever.recv().expect("Failed to get reply");
-                            for _ in 0..10 {
-                                if tweet.len() <= 140 {
-                                    break;
-                                }
-                                chain.send(ChainMessage::Command("sentence 15".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
-                                tweet = markov_reciever.recv().expect("Failed to get reply");
-                            }
-                            tweet.truncate(140);
-                            if let Some(error) = egg_mode::tweet::DraftTweet::new(&tweet).send(&token).err() {
-                                println!("Tweet {} failed to send with error {:#?}", tweet, error);
-                            }
-                        }
-                        _ => ()
+            while let Ok(command) = reciever.recv() {
+                match command.as_ref() {
+                    "stop" => {
+                        break
                     }
+                    "tweet" => {
+                        chain.send(ChainMessage::Command("sentence 15".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                        let mut tweet = markov_reciever.recv().expect("Failed to get reply");
+                        for _ in 0..10 {
+                            if tweet.len() <= 140 {
+                                break;
+                            }
+                            chain.send(ChainMessage::Command("sentence 15".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                            tweet = markov_reciever.recv().expect("Failed to get reply");
+                        }
+                        tweet.truncate(140);
+                        if let Some(error) = egg_mode::tweet::DraftTweet::new(&tweet).send(&token).err() {
+                            println!("Tweet {} failed to send with error {:#?}", tweet, error);
+                        }
+                    }
+                    _ => ()
                 }
             }
         }).unwrap();

@@ -826,7 +826,7 @@ impl ChainCore {
             for key in &temp_keys {
                 if key[0] != END && key[1] != END && key[2] != END {
                     let temp_size = self.next.get(key).unwrap_or(&Vec::new()).len();
-                    if (temp_size > 0) && (best_size == 0 || (temp_size < best_size)) {
+                    if (temp_size > 0) && (best_size == 0 || (temp_size < best_size) || (temp_size == best_size && best[0] <= key[0])) {
                         best = *key;
                         best_size = temp_size;
                     }

@@ -36,9 +36,15 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             }
             let mut chain = MarkovChain::new(words, "lines/tumblr");
             chain.parent = Some(main_chain);
-            //chain.strength = 0.6;
+            chain.set_strength(config.strength);
             let chain = chain.thread().0;
             let (markov_sender, markov_reciever) = channel();
+            for _ in 0..config.askers.len() {
+                chain.send(ChainMessage::RandomWord(markov_sender.clone())).unwrap();
+                let word = markov_reciever.recv().unwrap();
+                let keys: Vec<u32> = word.chars().map(|c| c as u32).collect();
+                name_chain.learn(keys);
+            }
             let mut tumblr = Tumblr::new(&config.consumer_key, &config.consumer_secret);
             tumblr.set_token(&config.access_key, &config.access_secret);
             let answer_sender = sender.clone();
@@ -201,7 +207,10 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                     "reload" => {
                         let new_config = TumblrConfig::load(config_file);
                         config.blog = new_config.blog;
+                        config.strength = new_config.strength;
                         config.askers = new_config.askers;
+                        chain.send(ChainMessage::Command(format!("strength {}", config.strength), Power::Cool, markov_sender.clone())).expect("Failed to send command to chain");
+                        println!("{}", markov_reciever.recv().expect("Failed to get reply"));
                     }
                     _ => ()
                 }
@@ -218,6 +227,8 @@ struct TumblrConfig {
     access_key: String,
     access_secret: String,
     blog: String,
+    #[serde(default = "default_strength")]
+    strength: f32,
     askers: Vec<String>,
 }
 
@@ -235,4 +246,8 @@ impl TumblrConfig {
     pub fn save(&self, filename: &str) {
         serde_json::to_writer_pretty(&mut File::create(filename).expect("Could not create tumblr config file"), &self).expect("Failed to write discord config file");
     }
+}
+
+fn default_strength() -> f32 {
+    0.6
 }

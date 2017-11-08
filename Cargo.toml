@@ -8,13 +8,22 @@ authors = ["mraof <mraof@mraof.com>"]
 rand = "*"
 regex = { version = "*", features = ["pattern"] }
 lazy_static = "*"
-discord = {git = "https://github.com/ArtemGr/discord-rs"}
+discord = {git = "https://github.com/mraof/discord-rs", default-features = false}
 retry = "*"
 mime = "0.2" #Otherwise mime_guess will use 0.1
 hyper = "*"
+hyper-tls = "*"
 egg-mode = "*"
 serde = "*"
 serde_json = "*"
 serde_derive = "*"
-tumblr = {path = "../tumblr-rs"}
-base64 = "*"
+tumblr = {git = "https://github.com/mraof/tumblr-rs"}
+meval = "*"
+linked-hash-map = "*"
+futures = "*"
+tokio-core = "*"
+unicode-normalization = "*"
+distance = "*"
+
+tcpgen = {git = "https://github.com/mraof/tcpgen"}
+morbitgen = {path = "/home/mraof/morbitgen"}

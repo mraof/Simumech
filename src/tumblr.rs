@@ -7,8 +7,9 @@ use std::thread::sleep;
 use std::time::{Duration, UNIX_EPOCH};
 use serde_json;
 use tumblr_lib::{Tumblr, Response, ParamList, PostType};
-use rand;
+use rand::OsRng;
 use rand::Rng;
+use rand::distributions::{IndependentSample, Weighted, WeightedChoice};
 use std::char;
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
@@ -35,7 +36,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                 name_chain.learn(keys);
             }
             let mut chain = MarkovChain::new(words, "lines/tumblr");
-            chain.parent = Some(main_chain);
+            chain.parent = Some(main_chain.clone());
             chain.set_strength(config.strength);
             let chain = chain.thread().0;
             let (markov_sender, markov_reciever) = channel();
@@ -66,6 +67,13 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                         post_sender.send("post".to_string()).expect("Failed to send answer command to tumblr reciever");
                     }
                 }).expect("Unable to create tumblr poster thread");
+            let mut post_chances = vec![
+                Weighted {weight: 5, item: "TEXT"},
+                Weighted {weight: 1, item: "CHAT"},
+                Weighted {weight: 3, item: "QUOTE"},
+            ];
+            let post_chooser = WeightedChoice::new(&mut post_chances);
+            let mut rng = OsRng::new().unwrap();
             while let Ok(command) = reciever.recv() {
                 match command.as_ref() {
                     "stop" => {
@@ -81,7 +89,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 println!("Found {} asks", posts.len());
                                 for post in posts {
                                     let post = post.into_post();
-                                    if let PostType::Answer { answer, asking_name, asking_url, question} = post.post_type {
+                                    if let PostType::Answer { answer, asking_name, asking_url, question, .. } = post.post_type {
                                         if !answer.is_empty() {
                                             println!("Tumblr ask already had an answer, {}", answer);
                                         }
@@ -118,24 +126,23 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                         }
                     }
                     "post" => {
+                        let post_type = post_chooser.ind_sample(&mut rng);
                         let mut params = ParamList::new();
-                        let mut tags = String::new();
-                        let post_type = rand::thread_rng().next_u32() % 3;
+                        let mut tags = String::new() + post_type + ",";
                         println!("Making {} post", post_type);
                         match post_type {
-                            0 => {
+                            "TEXT" => {
                                 //Text
                                 params.insert("type".into(), "text".into());
                                 params.insert("native_inline_images".into(), "true".into());
-                                tags += "TEXT,";
-                                let body = if rand::thread_rng().next_u32() % 20 == 0 {
+                                let body = if rng.next_u32() % 20 == 0 {
                                     chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                     let mut title = markov_reciever.recv().expect("Failed to get reply");
                                     for i in 1..11 {
                                         if title.len() <= i * 10 {
                                             break;
                                         }
-                                        chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                        main_chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                         title = markov_reciever.recv().expect("Failed to get reply");
                                     }
                                     params.insert("title".into(), title.clone().into());
@@ -149,49 +156,48 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 chain.send(ChainMessage::Reply(body.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
                                 tags += &markov_reciever.recv().expect("Failed to get reply");
                             }
-                            1 => {
+                            "CHAT" => {
                                 //Chat
                                 params.insert("type".into(), "chat".into());
-                                tags += "CHAT,";
-                                let count = rand::thread_rng().next_u32() % 4 + 1;
+                                let count = rng.next_u32() % 4 + 1;
                                 let mut participants = Vec::with_capacity(count as usize);
                                 for _ in 0..count {
-                                    participants.push(rand::thread_rng().choose(&config.askers).unwrap().clone());
+                                    participants.push(rng.choose(&config.askers).unwrap().clone());
                                 }
                                 let mut conversation = String::new();
-                                let mut last;
+                                let mut last: String;
                                 let mut last_person;
-                                if rand::thread_rng().next_u32() % 20 == 0 {
+                                if rng.next_u32() % 20 == 0 {
                                     last_person = config.blog.clone();
-                                    chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                    main_chain.send(ChainMessage::Command("sentence 5".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                     last = markov_reciever.recv().expect("Failed to get reply");
                                     params.insert("title".into(), last.clone().into());
                                 } else {
-                                    let current_person = rand::thread_rng().choose(&participants).unwrap().clone();
-                                    chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
+                                    let current_person = rng.choose(&participants).unwrap().clone();
+                                    main_chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                     last = markov_reciever.recv().expect("Failed to get reply");
                                     conversation += &format!("{}: {}\n", current_person, last);
                                     last_person = current_person;
                                 }
-                                for _ in 0..(rand::thread_rng().next_u32() % 6 + 1) * count {
-                                    let current_person = rand::thread_rng().choose(&participants).unwrap().clone();
+                                for _ in 0..(rng.next_u32() % 6 + 1) * count {
+                                    let current_person = rng.choose(&participants).unwrap().clone();
                                     chain.send(ChainMessage::Reply(last.clone(), current_person.clone(), last_person, config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
                                     last = markov_reciever.recv().expect("Failed to get reply");
+                                    last = last.split(". ").last().unwrap().to_string();
                                     conversation += &format!("{}: {}\n", current_person, last);
                                     last_person = current_person;
                                 }
                                 params.insert("conversation".into(), conversation.into());
                                 tags += &participants.join(",");
                             }
-                            _ => {
+                            "QUOTE" => {
                                 //Quote
                                 params.insert("type".into(), "quote".into());
-                                tags += "QUOTE,";
                                 chain.send(ChainMessage::Command("sentence".into(), Power::Normal, markov_sender.clone())).expect("Failed to send command to chain");
                                 let quote = markov_reciever.recv().expect("Failed to get reply");
                                 params.insert("quote".into(), quote.clone().into());
-                                if rand::thread_rng().next_u32() % 2 == 0 {
-                                    let base_name = rand::thread_rng().choose(&config.askers).unwrap();
+                                if rng.next_u32() % 2 == 0 {
+                                    let base_name = rng.choose(&config.askers).unwrap();
                                     let key = name_chain.choose_best(&base_name.chars().map(|c| c as u32).collect::<Vec<u32>>());
                                     let name: String = name_chain.generate(key, 5, false).into_iter().map(|c| unsafe {char::from_u32_unchecked(c)}).collect();
                                     params.insert("source".into(), name.into());
@@ -199,6 +205,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                 chain.send(ChainMessage::Reply(quote.clone(), config.blog.clone(), config.blog.clone(), config.askers.clone(), markov_sender.clone())).expect("Failed to send command to chain");
                                 tags += &markov_reciever.recv().expect("Failed to get reply");
                             }
+                            _ => ()
                         }
                         params.insert("tags".into(), tags.into());
                         println!("{:#?}", params);

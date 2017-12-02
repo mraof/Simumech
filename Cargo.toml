@@ -24,6 +24,11 @@ futures = "*"
 tokio-core = "*"
 unicode-normalization = "*"
 distance = "*"
+bincode = "*"
+byteorder = "*"
+ordermap = {version = "*", features = ["serde-1"]}
+astro = "*"
+chrono = "*"
 
 tcpgen = {git = "https://github.com/mraof/tcpgen"}
 morbitgen = {path = "/home/mraof/morbitgen"}

@@ -16,10 +16,12 @@ use super::serde_json;
 use tcpgen::TCPList;
 use morbitgen::{Template, Requirement};
 use linked_hash_map::LinkedHashMap;
+use super::letters_only;
 
 lazy_static! {
     static ref MENTION_REGEX: Regex = Regex::new(r"@here|@everyone|<@!?\d+>").expect("Failed to make MENTION_REGEX");
-    static ref BRIDGE_REGEX: Regex = Regex::new(r"^[_\*~]*<(.*?)>[_\*~]* (.*)").expect("Failed to make BRIDGE_REGEX");
+    static ref IRC_BRIDGE_REGEX: Regex = Regex::new(r"^[_\*~]*<(.*?)>[_\*~]* (.*)").expect("Failed to make IRC_BRIDGE_REGEX");
+    static ref PIKAGIRL_BRIDGE_REGEX: Regex = Regex::new(r"^. [_\*~]*(.*?):[_\*~]* (.*)").expect("Failed to make PIKAGIRL_BRIDGE_REGEX");
     static ref PIKAGIRL_PAY_REGEX: Regex = Regex::new(r"💰.*Transaction of (\d+) coin.*<@!?(\d+)> to <@!?(\d+)>.*").expect("Failed to make PIKAGIRL_PAY_REGEX");
     static ref DICE_REGEX: Regex = Regex::new(r"(?P<c>\d{0,4})d(?P<d>\d{1,16})").unwrap();
     static ref NO_COUNT_REGEX: Regex = Regex::new(r"d\(,").unwrap();
@@ -155,24 +157,6 @@ fn distance_contains(message: &str, target: &str, limit: usize) -> bool {
     false
 }
 
-fn letters_only(input: &str) -> String {
-    use unicode_normalization::UnicodeNormalization;
-    use std::ascii::AsciiExt;
-
-    input.nfkd()
-        .map(|c| if c >= '\u{1f150}' && c <= '\u{1f169}' {
-            unsafe { ::std::char::from_u32_unchecked(c as u32 - 0x1f150 + 'A' as u32) }
-        } else if c >= '\u{1f170}' && c <= '\u{1f189}' {
-            unsafe { ::std::char::from_u32_unchecked(c as u32 - 0x1f170 + 'A' as u32) }
-        } else if c >= '\u{1f1e6}' && c <= '\u{1f1ff}' {
-            unsafe { ::std::char::from_u32_unchecked(c as u32 - 0x1f1e6 + 'A' as u32) }
-        } else {
-            c
-        }.to_ascii_lowercase())
-        .filter(|c| c.is_lowercase() && c.is_ascii())
-        .collect::<String>()
-}
-
 #[derive(Default, Debug, Deserialize, Serialize)]
 #[serde(default)]
 struct DiscordConfig {
@@ -303,8 +287,15 @@ fn handle_message(message: &Message, discord_state: &mut DiscordState) -> Messag
         match message.author.id.0 {
             //PikaGirl
             169678500893163520 => {
-                println!("Gambling! {:?}", message.mentions);
-                if let Some(cap) = PIKAGIRL_PAY_REGEX.captures(&message.content) {
+                if let Some(cap) = PIKAGIRL_BRIDGE_REGEX.captures(&message.content) {
+                    author_name = cap.get(1).expect("No author captured").as_str().to_string();
+                    content = cap.get(2)
+                        .expect("No content captured")
+                        .as_str()
+                        .to_string();
+                    listen = true;
+                } else if let Some(cap) = PIKAGIRL_PAY_REGEX.captures(&message.content) {
+                    println!("Gambling! {:?}", message.mentions);
                     let amount = cap.get(1).expect("No amount captured");
                     let payer = cap.get(2).expect("No payer captured");
                     let paid = cap.get(3).expect("No paid captured");
@@ -316,8 +307,9 @@ fn handle_message(message: &Message, discord_state: &mut DiscordState) -> Messag
                     }
                 }
             }
+            //crocbot
             229824641160577025 => {
-                if let Some(cap) = BRIDGE_REGEX.captures(&message.content) {
+                if let Some(cap) = IRC_BRIDGE_REGEX.captures(&message.content) {
                     author_name = cap.get(1).expect("No author captured").as_str().to_string();
                     content = cap.get(2)
                         .expect("No content captured")

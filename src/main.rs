@@ -15,12 +15,18 @@ extern crate morbitgen;
 extern crate linked_hash_map;
 extern crate unicode_normalization;
 extern crate distance;
+extern crate byteorder;
+#[macro_use]
+extern crate ordermap;
 
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate bincode;
 
 extern crate meval;
+extern crate astro;
+extern crate chrono;
 
 use std::collections::{BTreeSet, HashMap};
 use std::collections::hash_map::Entry;
@@ -31,14 +37,21 @@ use std::hash::{Hash, Hasher, BuildHasher};
 use std::collections::hash_map::RandomState;
 use std::sync::{RwLock, Arc};
 use std::sync::mpsc::{channel, Sender};
-use std::io::{LineWriter, Write};
+use std::io::{LineWriter, Write, BufWriter, Read};
 
 use rand::Rng;
 use rand::OsRng;
+use rand::distributions::{IndependentSample, Weighted, WeightedChoice};
+
+use bincode::{serialize_into, deserialize_from, Infinite};
+use byteorder::{WriteBytesExt, ByteOrder, BE};
+
+use ordermap::OrderMap;
 
 mod discord;
 mod twitter;
 mod tumblr;
+mod astronomy;
 
 type Key = [u32; 3];
 
@@ -53,7 +66,15 @@ lazy_static! {
 
 //TODO Save cache of lines as u32 and word map
 fn main() {
-    let words = Arc::new(RwLock::new(WordMap::new()));
+    let word_path = Path::new("cache/words");
+    let words = if let Ok(mut word_file) = File::open(word_path) {
+        let mut words: WordMap = deserialize_from(&mut word_file, Infinite).expect("Unable to read cache/words, please delete it");
+        words.cached = true;
+        words
+    } else {
+        WordMap::new()
+    };
+    let words = Arc::new(RwLock::new(words));
     let instant = std::time::Instant::now();
     let markov_chain = MarkovChain::new(words.clone(), "lines/lines.txt");
     let load_time = instant.elapsed();
@@ -134,6 +155,9 @@ fn main() {
     }
     thread.join().expect("Failed to join thread");
     console_thread.join().expect("Failed to join console thread");
+    std::fs::create_dir_all(word_path.parent().expect("Failed to get parent")).expect("Failed to create cache directory");
+    let mut word_file = File::create(word_path).expect("Unable to create cache/words");
+    serialize_into(&mut word_file, &*words.read().unwrap(), Infinite).expect("Unable to write to cache/words");
 }
 
 fn replace_names(string: &str, names: &[String]) -> String {
@@ -162,23 +186,11 @@ fn replace_names(string: &str, names: &[String]) -> String {
     words.join(" ")
 }
 
-fn lowercase_nonurl(string: &str) -> String {
-    string.split(' ')
-        .map(|word| {
-            if URL_REGEX.is_match(word) {
-                word.into()
-            } else {
-                word.to_lowercase()
-            }
-        })
-        .collect::<Vec<String>>()
-        .join(" ")
-}
-
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct WordMap {
-    words: Vec<String>,
+    words: Vec<OrderMap<String, u32>>,
     ids: HashMap<String, u32>,
+    cached: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -192,7 +204,7 @@ pub struct MarkovChain {
     pub core: Arc<RwLock<ChainCore>>,
     pub words: Arc<RwLock<WordMap>>,
     pub lines: BTreeSet<u64>,
-    pub build_hasher: RandomState,
+    build_hasher: RandomState,
     pub filename: String,
     parent: Option<Sender<ChainMessage>>,
     pub tell_parent: bool,
@@ -224,23 +236,56 @@ impl MarkovChain {
         };
         {
             println!("Loading chain {}", filename);
-            let path = Path::new(filename);
-            std::fs::create_dir_all(&path.parent().expect("Failed to get parent")).expect("Failed to create directory");
-            let file = OpenOptions::new().append(true).read(true).create(true).open(&path).expect(&format!("Failed to open {:?}", &path));
-            let reader = BufReader::new(file);
             let mut words = words.write().expect("Failed to get words for writing");
-            let mut core = markov_chain.core.write().expect("Couldn't lock core for writing");
-            for line in reader.lines() {
-                let line = line.expect("Failed to unwrap line");
+            let cache_path = format!("cache/{}", filename);
+            let cache_path = Path::new(&cache_path);
+            let cache_file = if words.cached { File::open(cache_path).ok() } else { None };
+            std::fs::create_dir_all(Path::new(&filename).parent().expect("Failed to get parent")).expect("Failed to create directory");
+            std::fs::create_dir_all(cache_path.parent().expect("Failed to get parent")).expect("Failed to create cache directory");
+            let lines: Vec<Vec<u32>> = if let Some(mut file) = cache_file {
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).expect("Failed to read cache file");
+                let mut lines = Vec::new();
+                let mut line_words = Vec::new();
+                for i in 0..bytes.len() / 4 {
+                    let word = BE::read_u32(&bytes[i * 4..i * 4 + 4]);
+                    if word == END {
+                        lines.push(line_words);
+                        line_words = Vec::new();
+                    } else {
+                        line_words.push(word);
+                    }
+                }
+                lines
+            } else if let Ok(file) = File::open(&filename) {
+                let reader = BufReader::new(file);
+                let mut bytes = Vec::new();
+                let lines = reader.lines().map(|line| {
+                    let line = line.expect("Failed to unwrap line");
+                    let line_words = line.split(' ').map(|word| words.lookup(word.into())).collect::<Vec<u32>>();
+                    for &word in &line_words {
+                        //Just ignore the result because this can never fail for vecs
+                        let _ = bytes.write_u32::<BE>(word);
+                    }
+                    let _ = bytes.write_u32::<BE>(END);
+                    line_words
+                }).collect();
+                let cache_file = File::create(cache_path).expect("Failed to open cache file");
+                let mut cache_writer = BufWriter::new(cache_file);
+                cache_writer.write_all(&bytes).expect("Failed to write line cache");
+                lines
+            } else {
+                Vec::new()
+            };
+
+            for line_words in lines {
+                let mut core = markov_chain.core.write().expect("Couldn't lock core for writing");
                 let mut hasher = markov_chain.build_hasher.build_hasher();
-                line.to_lowercase().hash(&mut hasher);
+                line_words.hash(&mut hasher);
                 let hash = hasher.finish();
                 if markov_chain.lines.insert(hash) {
-                    let line_words: Vec<u32> = line.split(' ').map(|word| words.lookup(word.into())).collect();
                     core.learn(line_words);
-                } /*else {
-                println!("Duplicate line in {}: {}", path.to_string_lossy(), line)
-            }*/
+                }
             }
         }
         markov_chain
@@ -255,13 +300,22 @@ impl MarkovChain {
             .name(self.filename.clone())
             .spawn(move || {
                 let file = OpenOptions::new().append(true).create(true).open(&self.filename).expect("Failed to open");
+                let cache_file = OpenOptions::new().append(true).create(true).open(&format!("cache/{}", &self.filename)).expect("Failed to open cache file");
                 let mut writer = LineWriter::new(file);
+                let mut cache_writer = BufWriter::new(cache_file);
                 let mut random = OsRng::new().unwrap();
                 while let Ok(message) = receiver.recv() {
                     match message {
                         ChainMessage::Learn(line, names) => {
-                            if self.add_line(&line, &names) {
-                                writer.write_all(format!("{}\n", line).as_bytes()).expect("Failed to write");
+                            for (line, vec) in self.add_line(&line, &names) {
+                                writer.write_all(format!("{}\n", line).as_bytes()).expect("Failed to write line");
+                                let mut bytes: Vec<u8> = Vec::with_capacity((vec.len() + 1) * std::mem::size_of::<u32>());
+                                for word in vec {
+                                    //Just ignore the result because this can never fail for vecs
+                                    let _ = bytes.write_u32::<BE>(word);
+                                }
+                                let _ = bytes.write_u32::<BE>(END);
+                                cache_writer.write_all(&bytes).expect("Failed to write line cache");
                             }
                         }
                         ChainMessage::Reply(line, name, sender, names, replier) => {
@@ -270,9 +324,9 @@ impl MarkovChain {
                         ChainMessage::NextNum(key, dir, sender) => {
                             let core = self.core.read().expect("Couldn't lock core for writing");
                             sender.send(if dir == 0 {
-                                core.prev.get(&key).unwrap_or(&Vec::new()).len()
+                                core.prev.get(&key).map_or(0, |list| list.len())
                             } else {
-                                core.next.get(&key).unwrap_or(&Vec::new()).len()
+                                core.next.get(&key).map_or(0, |list| list.len())
                             })
                                 .expect("Could not send next num");
                         }
@@ -302,12 +356,15 @@ impl MarkovChain {
         (sender, thread)
     }
 
-    pub fn add_line(&mut self, line: &str, names: &[String]) -> bool {
-        let mut result = false;
+    pub fn add_line(&mut self, line: &str, names: &[String]) -> Vec<(String, Vec<u32>)> {
+        let mut learned = Vec::new();
         let line = &replace_names(line, names);
         for line in SENTENCE_END.split(line) {
+            let words = self.words.clone();
+            let mut words = words.write().expect("Failed to lock words for writing");
+            let line_words: Vec<u32> = line.split(' ').map(|word| words.lookup(word.into())).collect();
             let mut hasher = self.build_hasher.build_hasher();
-            line.to_lowercase().hash(&mut hasher);
+            line_words.hash(&mut hasher);
             let hash = hasher.finish();
             if self.tell_parent {
                 if let Some(ref sender) = self.parent {
@@ -315,18 +372,15 @@ impl MarkovChain {
                 }
             }
             if self.lines.insert(hash) {
-                let words = self.words.clone();
-                let mut words = words.write().expect("Failed to lock words for writing");
-                let line_words: Vec<u32> = line.split(' ').map(|word| words.lookup(word.into())).collect();
                 let mut core = self.core.write().expect("Couldn't lock core for writing");
+                learned.push((line.to_string(), line_words.clone()));
                 core.learn(line_words);
-                result = true
             }
             if line.contains(". ") {
                 println!("Somehow missed {}", line)
             }
         }
-        result
+        learned
     }
 
     pub fn reply(&mut self, input: &str, name: &str, sender: &str, names: &[String]) -> String {
@@ -353,7 +407,7 @@ impl MarkovChain {
 
         let input: Vec<u32> = {
             let mut words = self.words.write().expect("Failed to lock words for writing");
-            lowercase_nonurl(&input).split(' ').map(|word| words.lookup(word.into())).collect()
+            input.split(' ').map(|word| words.lookup(word.into())).collect()
         };
 
         if !input.is_empty() {
@@ -390,12 +444,16 @@ impl MarkovChain {
             let mut random = OsRng::new().unwrap();
             let mut sentence = sentence.iter()
                 .map(|&word| {
-                    NAME_TOKEN.replace_all(&words.get(word), |caps: &regex::Captures| {
+                    let word_map = &words.get_all(word);
+                    let mut chances: Vec<_> = word_map.iter().map(|(word, count)| Weighted {weight: *count, item: word}).collect();
+                    let chooser = WeightedChoice::new(&mut chances);
+                    let word = chooser.ind_sample(&mut random);
+                    NAME_TOKEN.replace_all(word, |caps: &regex::Captures| {
                         name_replacements.entry(caps[0].to_string())
                             .or_insert_with(|| names[random.next_u32() as usize % names.len()].clone())
                             .clone()
-                    })
-                }.to_string())
+                    }).to_string()
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
 
@@ -423,7 +481,7 @@ impl MarkovChain {
     }
 
     pub fn command(&mut self, command: &str, power: Power) -> String {
-        let parts: Vec<String> = lowercase_nonurl(command).split(' ').map(|part| part.to_string()).collect();
+        let parts: Vec<String> = command.split(' ').map(|part| part.to_lowercase()).collect();
         match parts.get(0).map(String::as_ref) {
             Some("stats") => {
                 let words = self.words.read().expect("Failed to get words for reading");
@@ -611,10 +669,23 @@ impl WordMap {
     }
 
     pub fn lookup(&mut self, word: String) -> u32 {
-        match self.ids.entry(word.to_lowercase()) {
-            Entry::Occupied(entry) => *entry.get(),
+        let mut real_word = String::new();
+        for c in word.chars() {
+            let letters = letters_only(&c.to_string());
+            real_word += &if !letters.is_empty() {
+                letters
+            } else {
+                c.to_lowercase().to_string()
+            }
+        }
+        match self.ids.entry(real_word) {
+            Entry::Occupied(entry) => {
+                let index = *entry.get();
+                *self.words[index as usize].entry(word).or_insert(0) += 1;
+                index
+            }
             Entry::Vacant(entry) => {
-                self.words.push(word.clone());
+                self.words.push(ordermap!(word => 1));
                 entry.insert(self.words.len() as u32 - 1);
                 self.words.len() as u32 - 1
             }
@@ -627,6 +698,10 @@ impl WordMap {
     }
 
     pub fn get(&self, id: u32) -> String {
+        self.words[id as usize % self.words.len()].get_index(0).unwrap().0.clone()
+    }
+    
+    pub fn get_all(&self, id: u32) -> OrderMap<String, u32> {
         self.words[id as usize % self.words.len()].clone()
     }
 
@@ -715,7 +790,7 @@ impl ChainCore {
         let mut next3;
         let mut next2;
         let mut next1;
-        let end = keys.len() - 2;
+        let end = keys.len() - 1;
         for (i, &word) in keys.iter().enumerate().take(end).skip(2) {
             if i > 2 {
                 next3 = [keys[i - 3], keys[i - 2], keys[i - 1]];
@@ -725,7 +800,7 @@ impl ChainCore {
                 self.next.entry(next2).or_insert_with(Default::default).push(word);
                 self.next.entry(next1).or_insert_with(Default::default).push(word);
             }
-            if i < end {
+            if i < end - 1 {
                 prev3 = [keys[i + 2], keys[i + 1], word];
                 prev2 = [prev3[1], prev3[2], NONE];
                 prev1 = [prev3[2], NONE, NONE];
@@ -832,14 +907,14 @@ impl ChainCore {
     fn choose_best(&self, input: &[u32]) -> Key {
         let mut best = [input[0], *input.get(1).unwrap_or(&NONE), *input.get(2).unwrap_or(&NONE)];
         let mut temp_keys = vec![[END, NONE, NONE], [END, END, NONE], [END, END, END]];
-        let mut best_size = self.next.get(&best).unwrap_or(&Vec::new()).len();
+        let mut best_size = self.next.get(&best).map_or(0, |list| list.len());
         for word in input {
             temp_keys[2] = [temp_keys[2][1], temp_keys[2][2], *word];
             temp_keys[1] = [temp_keys[2][1], temp_keys[2][2], NONE];
             temp_keys[0] = [temp_keys[2][2], NONE, NONE];
             for key in &temp_keys {
                 if key[0] != END && key[1] != END && key[2] != END {
-                    let temp_size = self.next.get(key).unwrap_or(&Vec::new()).len();
+                    let temp_size = self.next.get(key).map_or(0, |list| list.len());
                     if (temp_size > 0) && (best_size == 0 || (temp_size < best_size) || (temp_size == best_size && best[0] <= key[0])) {
                         best = *key;
                         best_size = temp_size;
@@ -873,9 +948,9 @@ impl ChainCore {
                     Some(ref parent) => {
                         let mut parent = parent.write().expect("Failed to get parent for writing");
                         let num = if dir == 0 {
-                            parent.prev.get(key).unwrap_or(&Vec::new()).len()
+                            parent.prev.get(key).map_or(0, |list| list.len())
                         } else {
-                            parent.next.get(key).unwrap_or(&Vec::new()).len()
+                            parent.next.get(key).map_or(0, |list| list.len())
                         };
                         if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % ((list.len() * list.len()) as f32 * self.strength + (1.0 - self.strength)) as u32 {
                             parent.next(key, dir)
@@ -903,6 +978,23 @@ impl Default for ChainCore {
     fn default() -> Self {
         ChainCore::new()
     }
+}
+
+fn letters_only(input: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    input.nfkd()
+        .map(|c| if c >= '\u{1f150}' && c <= '\u{1f169}' {
+            unsafe { ::std::char::from_u32_unchecked(c as u32 - 0x1f150 + 'A' as u32) }
+        } else if c >= '\u{1f170}' && c <= '\u{1f189}' {
+            unsafe { ::std::char::from_u32_unchecked(c as u32 - 0x1f170 + 'A' as u32) }
+        } else if c >= '\u{1f1e6}' && c <= '\u{1f1ff}' {
+            unsafe { ::std::char::from_u32_unchecked(c as u32 - 0x1f1e6 + 'A' as u32) }
+        } else {
+            c
+        }.to_ascii_lowercase())
+        .filter(|c| c.is_lowercase() && c.is_ascii())
+        .collect::<String>()
 }
 
 #[test]
@@ -935,3 +1027,4 @@ fn test_word_chain() {
         println!("{}", word);
     }
 }
+

@@ -5,3 +5,4 @@ target
 /images/
 *.iml
 /assets/
+/cache/

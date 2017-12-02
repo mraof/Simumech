@@ -11,6 +11,7 @@ use rand::OsRng;
 use rand::Rng;
 use rand::distributions::{IndependentSample, Weighted, WeightedChoice};
 use std::char;
+use astro::lunar::Phase;
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
     let (sender, reciever): (_, Receiver<String>) = channel();
@@ -75,6 +76,8 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let post_chooser = WeightedChoice::new(&mut post_chances);
             let mut rng = OsRng::new().unwrap();
             while let Ok(command) = reciever.recv() {
+                chain.send(ChainMessage::Command(format!("strength {}", config.strength * (super::astronomy::time_from_moon_phase(Phase::Full) / 15.0) as f32), Power::Cool, markov_sender.clone())).expect("Failed to send command to chain");
+                markov_reciever.recv().expect("Failed to get reply");
                 match command.as_ref() {
                     "stop" => {
                         break

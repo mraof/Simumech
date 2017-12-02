@@ -7,6 +7,7 @@ use std::thread::sleep;
 use std::time::{Duration, UNIX_EPOCH};
 use serde_json;
 use egg_mode;
+use astro::lunar::Phase;
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
     let (sender, reciever): (_, Receiver<String>) = channel();
@@ -36,6 +37,8 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let access_token = egg_mode::KeyPair::new(config.access_key, config.access_secret);
             let token = egg_mode::Token::Access { consumer: consumer_token, access: access_token };
             while let Ok(command) = reciever.recv() {
+                chain.send(ChainMessage::Command(format!("strength {}", 0.6 * (super::astronomy::time_from_moon_phase(Phase::Full) / 15.0) as f32), Power::Cool, markov_sender.clone())).expect("Failed to send command to chain");
+                markov_reciever.recv().expect("Failed to get reply");
                 match command.as_ref() {
                     "stop" => {
                         break

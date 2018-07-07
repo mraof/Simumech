@@ -478,6 +478,9 @@ fn message_markov(message_info: &MessageInfo, discord_state: &mut DiscordState) 
                     }
                     _ => (),
                 };
+                if private {
+                    chain.set_strength(1.5)
+                }
                 chain.parent = Some(parent_chain);
                 if nsfw || private {
                     chain.tell_parent = false
@@ -515,6 +518,13 @@ fn message_markov(message_info: &MessageInfo, discord_state: &mut DiscordState) 
                 .send(ChainMessage::Command(command, power, markov_sender.clone()))
                 .unwrap();
             let _ = discord.send_message(channel_id, &markov_reciever.recv().unwrap(), "", false);
+        } else if content.starts_with("$level") {
+            let (count_sender, count_reciever) = channel();
+            chain.send(ChainMessage::Count(count_sender)).unwrap();
+            let count = count_reciever.recv().unwrap() as f64;
+            use std::f64::consts::E;
+            let level = (count.powf(1.0 / E) + count.ln()) as u64;
+            let _ = discord.send_message(channel_id, &format!("Level {}", level), "", false);
         } else {
             if private || distance_contains(content, name, 3) {
                 chain
@@ -546,7 +556,7 @@ fn message_markov(message_info: &MessageInfo, discord_state: &mut DiscordState) 
 
 fn roll(message_info: &MessageInfo, discord_state: &mut DiscordState) -> bool {
     use meval;
-    use rand::Rng;
+    use rand::RngCore;
     use rand::OsRng;
     use std::iter::Sum;
     let discord = &discord_state.discord;

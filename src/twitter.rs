@@ -7,6 +7,7 @@ use std::thread::sleep;
 use std::time::{Duration, UNIX_EPOCH};
 use serde_json;
 use egg_mode;
+use tokio_core::reactor::Core;
 use astro::lunar::Phase;
 
 pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> Sender<String> {
@@ -33,6 +34,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                     }
                 }).expect("Unable to create twitter tweeter thread");
 
+            let mut core = Core::new().unwrap();
+            let handle = core.handle();
+            
             let consumer_token = egg_mode::KeyPair::new(config.consumer_key, config.consumer_secret);
             let access_token = egg_mode::KeyPair::new(config.access_key, config.access_secret);
             let token = egg_mode::Token::Access { consumer: consumer_token, access: access_token };
@@ -54,7 +58,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                             tweet = markov_reciever.recv().expect("Failed to get reply");
                         }
                         tweet.truncate(140);
-                        if let Some(error) = egg_mode::tweet::DraftTweet::new(&tweet).send(&token).err() {
+                        if let Err(error) = core.run(egg_mode::tweet::DraftTweet::new(tweet.as_str()).send(&token, &handle)) {
                             println!("Tweet {} failed to send with error {:#?}", tweet, error);
                         }
                     }

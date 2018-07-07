@@ -17,7 +17,8 @@ extern crate unicode_normalization;
 extern crate distance;
 extern crate byteorder;
 #[macro_use]
-extern crate ordermap;
+extern crate indexmap;
+extern crate smallvec;
 
 #[macro_use]
 extern crate serde_derive;
@@ -39,14 +40,15 @@ use std::sync::{RwLock, Arc};
 use std::sync::mpsc::{channel, Sender};
 use std::io::{LineWriter, Write, BufWriter, Read};
 
+use rand::RngCore;
 use rand::Rng;
 use rand::OsRng;
-use rand::distributions::{IndependentSample, Weighted, WeightedChoice};
+use rand::distributions::{Distribution, Weighted, WeightedChoice};
 
-use bincode::{serialize_into, deserialize_from, Infinite};
+use bincode::{serialize_into, deserialize_from};
 use byteorder::{WriteBytesExt, ByteOrder, BE};
 
-use ordermap::OrderMap;
+use indexmap::IndexMap;
 
 mod discord;
 mod twitter;
@@ -54,6 +56,7 @@ mod tumblr;
 mod astronomy;
 
 type Key = [u32; 3];
+type KeyVec = smallvec::SmallVec<[u32; 1]>;
 
 const NONE: u32 = !0;
 const END: u32 = !1;
@@ -68,7 +71,7 @@ lazy_static! {
 fn main() {
     let word_path = Path::new("cache/words");
     let words = if let Ok(mut word_file) = File::open(word_path) {
-        let mut words: WordMap = deserialize_from(&mut word_file, Infinite).expect("Unable to read cache/words, please delete it");
+        let mut words: WordMap = deserialize_from(&mut word_file).expect("Unable to read cache/words, please delete it");
         words.cached = true;
         words
     } else {
@@ -157,7 +160,7 @@ fn main() {
     console_thread.join().expect("Failed to join console thread");
     std::fs::create_dir_all(word_path.parent().expect("Failed to get parent")).expect("Failed to create cache directory");
     let mut word_file = File::create(word_path).expect("Unable to create cache/words");
-    serialize_into(&mut word_file, &*words.read().unwrap(), Infinite).expect("Unable to write to cache/words");
+    serialize_into(&mut word_file, &*words.read().unwrap()).expect("Unable to write to cache/words");
 }
 
 fn replace_names(string: &str, names: &[String]) -> String {
@@ -188,7 +191,7 @@ fn replace_names(string: &str, names: &[String]) -> String {
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct WordMap {
-    words: Vec<OrderMap<String, u32>>,
+    words: Vec<IndexMap<String, u32>>,
     ids: HashMap<String, u32>,
     cached: bool,
 }
@@ -214,8 +217,9 @@ pub enum ChainMessage {
     Learn(String, Vec<String>),
     Reply(String, String, String, Vec<String>, Sender<String>),
     NextNum(Key, u8, Sender<usize>),
-    Next(Key, u8, Sender<Option<Vec<u32>>>),
+    Next(Key, u8, Sender<Option<KeyVec>>),
     Command(String, Power, Sender<String>),
+    Count(Sender<usize>),
     RandomWord(Sender<String>),
     ChangeParent(Option<Sender<ChainMessage>>),
     Core(Sender<Arc<RwLock<ChainCore>>>),
@@ -322,7 +326,7 @@ impl MarkovChain {
                             replier.send(self.reply(&line, &name, &sender, &names)).expect("Could not send reply");
                         }
                         ChainMessage::NextNum(key, dir, sender) => {
-                            let core = self.core.read().expect("Couldn't lock core for writing");
+                            let core = self.core.read().expect("Couldn't lock core for reading");
                             sender.send(if dir == 0 {
                                 core.prev.get(&key).map_or(0, |list| list.len())
                             } else {
@@ -340,6 +344,9 @@ impl MarkovChain {
                         ChainMessage::RandomWord(sender) => {
                             let words = self.words.read().expect("Couldn't lock words for reading");
                             sender.send(words.get(random.next_u32() % words.len() as u32)).expect("Could not send random word");
+                        }
+                        ChainMessage::Count(sender) => {
+                            sender.send(self.lines.len()).expect("Could not send line count");
                         }
                         ChainMessage::ChangeParent(parent) => {
                             self.set_parent(parent);
@@ -447,7 +454,7 @@ impl MarkovChain {
                     let word_map = &words.get_all(word);
                     let mut chances: Vec<_> = word_map.iter().map(|(word, count)| Weighted {weight: *count, item: word}).collect();
                     let chooser = WeightedChoice::new(&mut chances);
-                    let word = chooser.ind_sample(&mut random);
+                    let word = chooser.sample(&mut random);
                     NAME_TOKEN.replace_all(word, |caps: &regex::Captures| {
                         name_replacements.entry(caps[0].to_string())
                             .or_insert_with(|| names[random.next_u32() as usize % names.len()].clone())
@@ -544,8 +551,7 @@ impl MarkovChain {
                     if let Some(list) = maps[dir].get(&keys[dir]) {
                         let mut counts = HashMap::new();
                         let mut list = list.clone();
-                        list.retain(|&word| word < END);
-                        for word in list {
+                        for word in list.into_iter().filter(|&word| word < END) {
                             *counts.entry(word).or_insert(0) += 1
                         }
                         stats[dir].count = counts.len();
@@ -685,7 +691,7 @@ impl WordMap {
                 index
             }
             Entry::Vacant(entry) => {
-                self.words.push(ordermap!(word => 1));
+                self.words.push(indexmap!(word => 1));
                 entry.insert(self.words.len() as u32 - 1);
                 self.words.len() as u32 - 1
             }
@@ -701,7 +707,7 @@ impl WordMap {
         self.words[id as usize % self.words.len()].get_index(0).unwrap().0.clone()
     }
     
-    pub fn get_all(&self, id: u32) -> OrderMap<String, u32> {
+    pub fn get_all(&self, id: u32) -> IndexMap<String, u32> {
         self.words[id as usize % self.words.len()].clone()
     }
 
@@ -759,8 +765,8 @@ impl Default for GlobalConfig {
 }
 
 pub struct ChainCore {
-    pub next: HashMap<Key, Vec<u32>>,
-    pub prev: HashMap<Key, Vec<u32>>,
+    pub next: HashMap<Key, KeyVec>,
+    pub prev: HashMap<Key, KeyVec>,
     pub random: OsRng,
     pub parent: Option<Arc<RwLock<ChainCore>>>,
     pub consume: f32,
@@ -815,7 +821,7 @@ impl ChainCore {
         let mut sentence = vec![best[0], best[1], best[2]];
         sentence.retain(|&word| word < END);
         for dir in 0..2 {
-            let mut words_temp: HashMap<Key, Vec<u32>> = HashMap::new();
+            let mut words_temp: HashMap<Key, KeyVec> = HashMap::new();
             let mut last_word = match if dir == 0 {
                 sentence.get(1)
             } else {
@@ -851,15 +857,15 @@ impl ChainCore {
                     }
                 }
                 let key_index = {
-                    match words_temp.get(&keys[1]).unwrap_or(&Vec::new()).len() {
+                    match words_temp.get(&keys[1]).unwrap_or(&KeyVec::new()).len() {
                         0 => {
-                            if (ideal as f32) / (sentence.len() as f32) < self.random.next_f32() {
+                            if (ideal as f32) / (sentence.len() as f32) < self.random.gen::<f32>() {
                                 break;
                             }
                             0
                         }
                         two_length => {
-                            if !words_temp.get(&keys[2]).unwrap_or(&Vec::new()).is_empty() && self.random.next_f32() > 4.0 / (two_length as f32) {
+                            if !words_temp.get(&keys[2]).unwrap_or(&KeyVec::new()).is_empty() && self.random.gen::<f32>() > 4.0 / (two_length as f32) {
                                 2
                             } else {
                                 1
@@ -925,8 +931,8 @@ impl ChainCore {
         best
     }
 
-    pub fn next(&mut self, key: &Key, dir: u8) -> Option<Vec<u32>> {
-        let option = if self.consume > self.random.next_f32() {
+    pub fn next(&mut self, key: &Key, dir: u8) -> Option<KeyVec> {
+        let option = if self.consume > self.random.gen::<f32>() {
             if dir == 0 {
                 self.prev.remove(key)
             } else {
@@ -952,7 +958,7 @@ impl ChainCore {
                         } else {
                             parent.next.get(key).map_or(0, |list| list.len())
                         };
-                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % ((list.len() * list.len()) as f32 * self.strength + (1.0 - self.strength)) as u32 {
+                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % (list.len().pow(2) as f32 * self.strength + 1.0) as u32 {
                             parent.next(key, dir)
                         } else {
                             Some(list)
@@ -1027,4 +1033,3 @@ fn test_word_chain() {
         println!("{}", word);
     }
 }
-

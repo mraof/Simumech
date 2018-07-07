@@ -8,8 +8,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use serde_json;
 use tumblr_lib::{Tumblr, Response, ParamList, PostType};
 use rand::OsRng;
+use rand::RngCore;
 use rand::Rng;
-use rand::distributions::{IndependentSample, Weighted, WeightedChoice};
+use rand::distributions::{Distribution, Weighted, WeightedChoice};
 use std::char;
 use astro::lunar::Phase;
 
@@ -49,7 +50,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             }
             let mut tumblr = Tumblr::new(&config.consumer_key, &config.consumer_secret);
             tumblr.set_token(&config.access_key, &config.access_secret);
-            let answer_sender = sender.clone();
+            /*let answer_sender = sender.clone();
             Builder::new()
                 .name("tumblr_answers".to_string())
                 .spawn(move || {
@@ -57,7 +58,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                         answer_sender.send("answer".to_string()).expect("Failed to send answer command to tumblr reciever");
                         sleep(Duration::from_secs(600));
                     }
-                }).expect("Unable to create tumblr answers thread");
+                }).expect("Unable to create tumblr answers thread");*/
             let post_sender = sender.clone();
             Builder::new()
                 .name("tumblr_poster".to_string())
@@ -129,7 +130,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                         }
                     }
                     "post" => {
-                        let post_type = post_chooser.ind_sample(&mut rng);
+                        let post_type = post_chooser.sample(&mut rng);
                         let mut params = ParamList::new();
                         let mut tags = String::new() + post_type + ",";
                         println!("Making {} post", post_type);

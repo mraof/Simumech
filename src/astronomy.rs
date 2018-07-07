@@ -11,12 +11,14 @@ pub fn decimal_day(day: &time::DayOfMonth) -> f64 {
         - day.time_zone / 24.0
 }
 
+/*
 pub fn time_from_decimal_day(day: f64) -> (u8, u8, f64) {
     let hour = day.fract() * 24.0;
     let min = hour.fract() * 60.0;
     let sec = min.fract() * 60.0;
     (hour as u8, min as u8, sec)
 }
+*/
 
 pub fn time_from_moon_phase(phase: Phase) -> f64 {
     let now = Utc::now();

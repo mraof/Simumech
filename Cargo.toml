@@ -8,7 +8,7 @@ authors = ["mraof <mraof@mraof.com>"]
 rand = "*"
 regex = { version = "*", features = ["pattern"] }
 lazy_static = "*"
-discord = {git = "https://github.com/mraof/discord-rs", default-features = false}
+discord = {git = "https://github.com/ArtemGr/discord-rs", default-features = false}
 retry = "*"
 mime = "0.2" #Otherwise mime_guess will use 0.1
 hyper = "*"
@@ -26,9 +26,10 @@ unicode-normalization = "*"
 distance = "*"
 bincode = "*"
 byteorder = "*"
-ordermap = {version = "*", features = ["serde-1"]}
+indexmap = {version = "*", features = ["serde-1"]}
 astro = "*"
 chrono = "*"
+smallvec = "*"
 
 tcpgen = {git = "https://github.com/mraof/tcpgen"}
-morbitgen = {path = "/home/mraof/morbitgen"}
+morbitgen = {git = "https://github.com/mraof/morbitgen"}

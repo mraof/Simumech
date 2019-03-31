@@ -41,3 +41,11 @@ pub fn time_from_moon_phase(phase: Phase) -> f64 {
     let phase = lunar::time_of_phase(&date, &phase);
     (phase - julian_day).abs()
 }
+
+#[test]
+pub fn test_time_from_phases() {
+    println!("New: {}", time_from_moon_phase(Phase::New));
+    println!("First: {}", time_from_moon_phase(Phase::First));
+    println!("Full: {}", time_from_moon_phase(Phase::Full));
+    println!("Last: {}", time_from_moon_phase(Phase::Last));
+}

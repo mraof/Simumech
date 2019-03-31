@@ -8,7 +8,7 @@ extern crate hyper;
 extern crate hyper_tls;
 extern crate tokio_core;
 extern crate futures;
-extern crate egg_mode;
+//extern crate egg_mode;
 extern crate tumblr as tumblr_lib;
 extern crate tcpgen;
 extern crate morbitgen;
@@ -19,6 +19,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate indexmap;
 extern crate smallvec;
+extern crate seahash;
 
 #[macro_use]
 extern crate serde_derive;
@@ -51,12 +52,14 @@ use byteorder::{WriteBytesExt, ByteOrder, BE};
 use indexmap::IndexMap;
 
 mod discord;
-mod twitter;
+//egg mode uses an old version of hyper-tls with an incompatible openssl
+//mod twitter;
 mod tumblr;
 mod astronomy;
 
 type Key = [u32; 3];
 type KeyVec = smallvec::SmallVec<[u32; 1]>;
+type KeyMap = HashMap<Key, KeyVec, std::hash::BuildHasherDefault<seahash::SeaHasher>>;
 
 const NONE: u32 = !0;
 const END: u32 = !1;
@@ -89,9 +92,9 @@ fn main() {
     if CONFIG.chats.contains("discord") {
         chats.insert("discord", discord::start(sender.clone(), words.clone()));
     }
-    if CONFIG.chats.contains("twitter") {
+    /*if CONFIG.chats.contains("twitter") {
         chats.insert("twitter", twitter::start(sender.clone(), words.clone()));
-    }
+    }*/
     if CONFIG.chats.contains("tumblr") {
         chats.insert("tumblr", tumblr::start(sender.clone(), words.clone()));
     }
@@ -765,8 +768,8 @@ impl Default for GlobalConfig {
 }
 
 pub struct ChainCore {
-    pub next: HashMap<Key, KeyVec>,
-    pub prev: HashMap<Key, KeyVec>,
+    pub next: KeyMap,
+    pub prev: KeyMap,
     pub random: OsRng,
     pub parent: Option<Arc<RwLock<ChainCore>>>,
     pub consume: f32,
@@ -821,7 +824,7 @@ impl ChainCore {
         let mut sentence = vec![best[0], best[1], best[2]];
         sentence.retain(|&word| word < END);
         for dir in 0..2 {
-            let mut words_temp: HashMap<Key, KeyVec> = HashMap::new();
+            let mut words_temp: KeyMap = Default::default();
             let mut last_word = match if dir == 0 {
                 sentence.get(1)
             } else {
@@ -958,7 +961,8 @@ impl ChainCore {
                         } else {
                             parent.next.get(key).map_or(0, |list| list.len())
                         };
-                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % (list.len().pow(2) as f32 * self.strength + 1.0) as u32 {
+                        let strength = self.strength * (astronomy::time_from_moon_phase(astro::lunar::Phase::Full) / 15.0) as f32;
+                        if num > 0 && self.random.next_u32() % num as u32 > self.random.next_u32() % (list.len().pow(2) as f32 * strength + 1.0) as u32 {
                             parent.next(key, dir)
                         } else {
                             Some(list)

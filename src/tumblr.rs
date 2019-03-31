@@ -77,8 +77,9 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
             let post_chooser = WeightedChoice::new(&mut post_chances);
             let mut rng = OsRng::new().unwrap();
             while let Ok(command) = reciever.recv() {
-                chain.send(ChainMessage::Command(format!("strength {}", config.strength * (super::astronomy::time_from_moon_phase(Phase::Full) / 15.0) as f32), Power::Cool, markov_sender.clone())).expect("Failed to send command to chain");
-                markov_reciever.recv().expect("Failed to get reply");
+                let time_from_full = super::astronomy::time_from_moon_phase(Phase::Full);
+/*                chain.send(ChainMessage::Command(format!("strength {}", config.strength * (time_from_full / 15.0) as f32), Power::Cool, markov_sender.clone())).expect("Failed to send command to chain");
+                markov_reciever.recv().expect("Failed to get reply");*/
                 match command.as_ref() {
                     "stop" => {
                         break
@@ -97,7 +98,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                                         if !answer.is_empty() {
                                             println!("Tumblr ask already had an answer, {}", answer);
                                         }
-                                        let mut tags = "ANSWER,".to_string();
+                                        let mut tags = format!("ANSWER,DAY {},", time_from_full.round() as i64);
                                         if asking_url.is_some() {
                                             tags += &asking_name;
                                             tags += ",";
@@ -132,7 +133,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
                     "post" => {
                         let post_type = post_chooser.sample(&mut rng);
                         let mut params = ParamList::new();
-                        let mut tags = String::new() + post_type + ",";
+                        let mut tags = format!("{},DAY {},", post_type, time_from_full.round() as i64);
                         println!("Making {} post", post_type);
                         match post_type {
                             "TEXT" => {

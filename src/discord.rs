@@ -145,7 +145,7 @@ pub fn start(main_chain: Sender<ChainMessage>, words: Arc<RwLock<WordMap>>) -> S
 fn distance_contains(message: &str, target: &str, limit: usize) -> bool {
     use distance::damerau_levenshtein;
 
-    let full = letters_only(message);
+    let full = format!("   {}   ", letters_only(message));
     if full.len() <= target.len() {
         return damerau_levenshtein(&full, target) <= limit
     }
